@@ -1,6 +1,5 @@
 venv
 .env
-best_model.pt
 .env.example
 APK_BUILDS
 __pycache__/

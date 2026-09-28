@@ -1,0 +1,53 @@
+{
+  "expo": {
+    "name": "ScamShield AI",
+    "slug": "scamshield-ai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0d1117"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.scamshield.ai"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0d1117"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.scamshield.ai",
+      "permissions": [
+        "android.permission.RECEIVE_SMS",
+        "android.permission.READ_SMS",
+        "android.permission.RECEIVE_BOOT_COMPLETED"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-background-fetch",
+      "expo-task-manager",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#3b82f6"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "adae6787-fd7e-4308-ae49-ea76f85bba0b"
+      }
+    }
+  }
+}

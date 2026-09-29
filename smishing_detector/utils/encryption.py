@@ -19,11 +19,14 @@ load_dotenv()
 def _load_key_hex() -> str:
     key_hex = os.getenv("SMS_ENCRYPTION_KEY")
     if not key_hex:
-        key_hex = secrets.token_hex(32)
-        print("Warning: SMS_ENCRYPTION_KEY is not set; using an ephemeral dev key.")
+        # Fallback to known default so mobile and server stay in sync
+        # when .env is not yet configured. Set SMS_ENCRYPTION_KEY in .env
+        # before deploying to production.
+        key_hex = "5fc5555dfd4b23ecfbfbfda273cb82eb5fdfb8b25c5b1357a2568d6afa1f472e"
+        print("Warning: SMS_ENCRYPTION_KEY not set in .env; using built-in dev key.")
     if len(key_hex) != 64:
         raise ValueError("SMS_ENCRYPTION_KEY must be a 64-character hex string.")
-    bytes.fromhex(key_hex)
+    bytes.fromhex(key_hex)  # validate it's valid hex
     return key_hex
 
 

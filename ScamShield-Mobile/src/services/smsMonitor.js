@@ -63,37 +63,39 @@ async function sendThreatNotification(address, body, confidence) {
 }
 
 export function readInboxSms(count = SMS_LIMIT) {
-  return new Promise(async (resolve) => {
+  return new Promise((resolve) => {
     if (Platform.OS !== 'android') {
       resolve([]);
       return;
     }
 
-    try {
-      const granted = await requestSmsPermission();
-      if (!granted) {
-        resolve([]);
-        return;
-      }
-
-      const SmsAndroid = require('react-native-get-sms-android').default;
-      SmsAndroid.list(
-        JSON.stringify({ box: 'inbox', maxCount: count }),
-        () => resolve([]),
-        (_count, smsList) => {
-          const messages = JSON.parse(smsList).map((sms) => ({
-            id: String(sms._id),
-            address: sms.address,
-            body: sms.body,
-            date: sms.date,
-            read: sms.read === 1,
-          }));
-          resolve(messages);
+    (async () => {
+      try {
+        const granted = await requestSmsPermission();
+        if (!granted) {
+          resolve([]);
+          return;
         }
-      );
-    } catch (_) {
-      resolve([]);
-    }
+
+        const SmsAndroid = require('react-native-get-sms-android').default;
+        SmsAndroid.list(
+          JSON.stringify({ box: 'inbox', maxCount: count }),
+          () => resolve([]),
+          (_count, smsList) => {
+            const messages = JSON.parse(smsList).map((sms) => ({
+              id: String(sms._id),
+              address: sms.address,
+              body: sms.body,
+              date: sms.date,
+              read: sms.read === 1,
+            }));
+            resolve(messages);
+          }
+        );
+      } catch (_) {
+        resolve([]);
+      }
+    })();
   });
 }
 

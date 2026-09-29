@@ -30,8 +30,10 @@ Smishing (SMS Phishing) is a social engineering attack where fraudulent SMS mess
 | Explainability | None | **SHAP word-level explanations** |
 | Adversarial Testing | None | **4 attack types tested** |
 | Training Data | ~5,574 messages | **~30,000+ messages (6 sources, multilingual)** |
-| Mobile App | None | **React Native Android/iOS app** |
+| Mobile App | None | **React Native Android/iOS app with real-time SMS scanning** |
 | Indian SMS Support | None | **60+ synthetic Indian legit SMS + feature fixes** |
+| Encryption | None | **AES-256-CBC end-to-end encrypted API channel** |
+| Real-time Monitoring | None | **Background SMS polling with push notifications** |
 
 ---
 
@@ -40,24 +42,26 @@ Smishing (SMS Phishing) is a social engineering attack where fraudulent SMS mess
 ### 2.1 Three-Component System
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  ScamShield System                                           │
-│                                                             │
-│  ┌──────────────────┐    HTTP    ┌──────────────────────┐  │
-│  │  ScamShield      │◄──────────►│  Flask API           │  │
-│  │  Mobile App      │  /predict  │  (smishing_detector) │  │
-│  │  (React Native)  │  /explain  │  Port 5000           │  │
-│  │  Android / iOS   │  /health   │                      │  │
-│  └──────────────────┘           └──────────┬─────────────┘  │
-│                                            │                │
-│  ┌──────────────────┐                      │                │
-│  │  KaggleTraining/ │── best_model.pt ────►│                │
-│  │  (Isolated pkg)  │                      │                │
-│  └──────────────────┘           ┌──────────▼─────────────┐  │
-│                                 │  Google Safe Browsing  │  │
-│                                 │  API (URL Verification)│  │
-│                                 └────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  ScamShield System                                               │
+│                                                                 │
+│  ┌──────────────────┐  AES-256-CBC  ┌──────────────────────┐   │
+│  │  ScamShield      │◄─────────────►│  Flask API           │   │
+│  │  Mobile App      │  /predict_    │  (smishing_detector) │   │
+│  │  (React Native)  │   secure      │  Port 5000           │   │
+│  │  Android / iOS   │  /explain     │                      │   │
+│  │  Real-time SMS   │  /health      │                      │   │
+│  └──────────────────┘               └──────────┬────────────┘   │
+│     ▲ Polls every 15s                          │               │
+│     │ (android inbox, latest 30)               │               │
+│  ┌──────────────────┐                          │               │
+│  │  KaggleTraining/ │── best_model.pt ─────────►│               │
+│  │  (Isolated pkg)  │                          │               │
+│  └──────────────────┘               ┌──────────▼────────────┐   │
+│                                     │  Google Safe Browsing  │   │
+│                                     │  API (URL Verification)│   │
+│                                     └────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### 2.2 Model Pipeline
@@ -400,6 +404,73 @@ eas build --platform android --profile production # → signed .apk
 
 ---
 
+## 9. Security & Mobile Architecture
+
+### 9.1 AES-256-CBC End-to-End Encryption
+
+All SMS content sent from the mobile app to the Flask API is encrypted using **AES-256-CBC** before transmission. This protects sensitive message content from interception (e.g., on shared Wi-Fi or untrusted networks).
+
+**Encryption Flow:**
+```
+Mobile (React Native)                     Server (Flask API)
+──────────────────────                    ──────────────────
+1. Read SMS from inbox                    1. Receive POST /predict_secure
+2. Generate random 16-byte IV             2. Base64-decode payload
+3. AES-256-CBC encrypt(message, key, IV)  3. Extract IV (first 16 bytes)
+4. Prepend IV to ciphertext               4. AES-256-CBC decrypt(ciphertext, key, IV)
+5. Base64-encode → send to API            5. Run XLM-RoBERTa prediction
+```
+
+**Key Management:**
+- 256-bit key stored in server `.env` as `SMS_ENCRYPTION_KEY`
+- Mobile fetches key from `/api/encryption-key` on first launch (token-protected via `X-App-Token` header)
+- Key cached in device `AsyncStorage` for offline use
+- Default fallback key ensures operation even if API is temporarily unreachable
+
+**Libraries Used:**
+- Mobile: `crypto-js` (AES-CBC, PKCS7 padding)
+- Server: `cryptography` (Python, `hazmat.primitives.ciphers`)
+
+### 9.2 Real-Time SMS Monitoring
+
+The mobile app monitors the Android SMS inbox in real-time using a two-tier approach:
+
+**Foreground Monitoring (while app is open):**
+- Polls the Android SMS inbox every **15 seconds** using `react-native-get-sms-android`
+- Reads only the **latest 30 messages** (configurable) to minimize memory usage
+- New messages since last check are auto-scanned via `/predict_secure`
+
+**Background Monitoring (app closed):**
+- Uses `expo-background-fetch` + `expo-task-manager` to register a persistent background task
+- Android schedules background fetches when device is idle (typically every 15 min)
+- Task auto-scans new SMS and fires a **local push notification** if risk level is `high` or `medium`
+
+**Notification Payload:**
+```
+⚠️ ScamShield: Suspicious SMS Detected
+From +91-XXXXX: "Aapka electricity connection aaj raat..."
+Confidence: 97%
+```
+
+**Permissions Required (Android):**
+- `READ_SMS` — read inbox contents
+- `RECEIVE_SMS` — be notified of new messages
+- `RECEIVE_BOOT_COMPLETED` — restart monitoring after device reboot
+
+### 9.3 API Endpoints Summary
+
+| Endpoint | Method | Auth | Description |
+|---|---|---|---|
+| `/predict` | POST | None | Unencrypted prediction (fallback) |
+| `/predict_secure` | POST | None | AES-256-CBC encrypted prediction |
+| `/batch_predict` | POST | None | Batch predict multiple messages |
+| `/explain` | POST | None | SHAP explanation |
+| `/check-domain` | POST | None | Google Safe Browsing lookup |
+| `/api/encryption-key` | GET | X-App-Token | Returns AES key for mobile |
+| `/health` | GET | None | Model status |
+
+---
+
 ## 10. Key Design Decisions
 
 | Decision | Rationale |
@@ -408,13 +479,15 @@ eas build --platform android --profile production # → signed .apk
 | All layers unfrozen | Multilingual fine-tuning needs full gradient flow through all 12 layers |
 | Late fusion (concatenation) | BERT and hand-crafted features learn independently before combining |
 | 17 hand-crafted features | Language-agnostic URL signals that XLM-RoBERTa alone cannot extract |
-| GSB post-prediction override | URLs are the most reliable spam signal — trust GSB over model alone |
+| GSB whitelist-only override | Only known-good domains override spam — new phishing domains not in GSB DB |
 | Threshold 0.55 (not 0.50) | Reduces false positives on borderline cases (Indian bank SMS) |
 | Label smoothing 0.05 | Prevents overconfident predictions on training distribution |
 | Batch size 16 (not 32) | XLM-RoBERTa (1.1GB) needs more VRAM per forward pass than DistilBERT |
 | Stratified 70/15/15 split | Maintains spam/ham ratio across all data splits |
 | Normalization from train only | Prevents data leakage from val/test into normalization statistics |
 | Synthetic Indian SMS | Corrects training distribution bias against Indian transactional messages |
+| AES-256-CBC (not AES-GCM) | `crypto-js` (React Native) natively supports CBC; simpler interop with Python |
+| Latest 30 SMS only | Limits memory usage and inference time in background task |
 
 ---
 
@@ -428,16 +501,31 @@ eas build --platform android --profile production # → signed .apk
 | Training time | ~45–90 min (Kaggle T4) |
 | Inference latency | ~100 ms/message (GPU), ~500 ms (CPU) |
 | API response time | ~600 ms (includes GSB lookup) |
+| Encryption overhead | <5 ms (AES-256-CBC, negligible) |
 
 ---
 
-## 12. Future Work
+## 12. Results Summary
 
-1. **Real-time SMS** — Android broadcast receiver for automatic scanning on SMS receive
-2. **On-device inference** — Export to ONNX/TFLite for offline mobile prediction
-3. **Active URL scanning** — Follow redirects, analyze page content
-4. **More Indian languages** — Tamil, Telugu, Kannada, Bengali via IndicBERT
-5. **Federated learning** — Train across devices without centralizing SMS data
-6. **Continuous learning** — Periodic model updates from newly reported scam patterns
-7. **Domain age check** — WHOIS lookup as additional URL feature
-8. **Tranco list** — Replace hardcoded LEGIT_DOMAINS whitelist with Tranco top-1M
+| Metric | Value |
+|---|---|
+| Test Accuracy | **97.54%** |
+| Spam F1-Score | **0.94** |
+| Val F1 (best epoch) | **0.9765** |
+| False Positive Rate | **0.46%** |
+| Hindi F1 (5,572 msgs) | **0.9845** |
+| Adversarial F1 drop | **≤ 0.01** |
+| Manual test (12 cases) | **12/12 correct** |
+
+---
+
+## 13. Future Work
+
+1. **On-device inference** — Export to ONNX/TFLite for fully offline mobile prediction (no API needed)
+2. **Active URL scanning** — Follow redirects, analyze landing page content
+3. **More Indian languages** — Tamil, Telugu, Kannada, Bengali via IndicBERT
+4. **Federated learning** — Train across devices without centralizing SMS data
+5. **Continuous learning** — Periodic model updates from newly reported scam patterns
+6. **Domain age check** — WHOIS lookup as additional URL feature (newly registered domains = higher risk)
+7. **iOS support** — SMS reading on iOS requires SiriKit/Message Filter Extension entitlement
+

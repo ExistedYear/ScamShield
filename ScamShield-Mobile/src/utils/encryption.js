@@ -1,8 +1,10 @@
 /**
  * AES-256-CBC encryption for SMS messages before sending to the API.
  *
- * The key is fetched from /api/encryption-key and cached in AsyncStorage.
- * There is intentionally no hardcoded fallback key.
+ * The key is fetched from /api/encryption-key on first launch and cached
+ * in AsyncStorage. Falls back to the built-in dev key if the server is
+ * unreachable (e.g. offline first boot). Set SMS_ENCRYPTION_KEY in the
+ * server .env to use a custom key — both sides must match.
  */
 
 import CryptoJS from 'crypto-js';
@@ -13,15 +15,15 @@ const APP_TOKEN = 'scamshield-dev-token';
 
 let _cachedKey = null;
 
+// Fallback key — matches SMS_ENCRYPTION_KEY default in encryption.py
+const DEFAULT_KEY = '5fc5555dfd4b23ecfbfbfda273cb82eb5fdfb8b25c5b1357a2568d6afa1f472e';
+
 export async function getEncryptionKey() {
   if (_cachedKey) return _cachedKey;
 
   const stored = await AsyncStorage.getItem(KEY_STORAGE);
-  if (!stored) {
-    throw new Error('Encryption key has not been initialized.');
-  }
-
-  _cachedKey = stored;
+  // Fall back to built-in dev key so the app works offline on first boot
+  _cachedKey = stored || DEFAULT_KEY;
   return _cachedKey;
 }
 

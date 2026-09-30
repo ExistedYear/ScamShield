@@ -1,519 +1,404 @@
+"""
+Dataset and feature engine for ScamShield.
+
+Feature extraction is deterministic and side-effect free. In particular, it does
+not call Google Safe Browsing or any network service. Training, evaluation, and
+inference all import the same functions from this module.
+"""
+
+from __future__ import annotations
+
+import os
 import re
-import pandas as pd
+from pathlib import Path
+from typing import Iterable, Optional
+
 import numpy as np
-import requests
-from sklearn.model_selection import train_test_split
+import pandas as pd
 import tldextract
-from io import StringIO
-from .safe_browsing import is_domain_legitimate
+from sklearn.model_selection import train_test_split
 
 
-SUSPICIOUS_TLDS = {'tk', 'ml', 'ga', 'cf', 'gq', 'xyz', 'top', 'click', 'link', 'work', 'loan', 'online', 'site', 'info', 'biz'}
+BASE_DIR = Path(__file__).resolve().parents[1]
+DATA_DIR = BASE_DIR / "data"
 
-URL_SHORTENERS = {'bit.ly', 'tinyurl.com', 't.co', 'goo.gl', 'ow.ly', 'is.gd', 'buff.ly', 'rebrand.ly', 'cutt.ly'}
-
-URGENCY_WORDS = {
-    # English urgency
-    'urgent', 'winner', 'won', 'free', 'prize', 'claim', 'cash',
-    'congratulations', 'selected', 'reward', 'limited', 'act now',
-    'suspended', 'click',
-    'password', 'invoice', 'payment', 'attached', 'order', 'receipt',
-    'crypto', 'bitcoin', 'wallet', 'action required',
-    # Hinglish / Roman-script Hindi urgency markers
-    'jaldi', 'turant', 'abhi', 'kijiye', 'rupaye', 'paisa',
-    'khata', 'band', 'inam', 'jeeta', 'loot', 'offer',
-    'kyc', 'recharge', 'cashback', 'lucky', 'gift', 'redeem',
-    # Hinglish threat/social-engineering phrases
-    'katega', 'kataega', 'kataegi', 'kategi', 'cut kar',
-    'bijli', 'bijli cut', 'power cut', 'connection cut',
-    'band ho jayega', 'band kar', 'band ho',
-    'officer', 'helpline', 'turant call', 'abhi call',
-    'aaj raat', 'kal subah', 'last chance', 'antim',
-    'court notice', 'fir', 'giraftari', 'arrest',
+SUSPICIOUS_TLDS = {
+    "tk", "ml", "ga", "cf", "gq", "xyz", "top", "click", "link",
+    "work", "loan", "online", "site", "info", "biz", "club",
 }
 
-CURRENCY_SYMBOLS = {'$', '£', '€', '₹', 'rs', 'rupee', 'btc', 'eth', 'usdt'}
+URL_SHORTENERS = {
+    "bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd",
+    "buff.ly", "rebrand.ly", "cutt.ly", "fkrt.it", "amzn.in",
+}
 
+LEGIT_DOMAINS = {
+    "amazon.com", "amazon.in", "netflix.com", "spotify.com", "apple.com",
+    "google.com", "microsoft.com", "paypal.com", "ebay.com", "walmart.com",
+    "fedex.com", "ups.com", "usps.com", "shopify.com", "slack.com",
+    "zoom.us", "gmail.com", "outlook.com", "yahoo.com",
+    "flipkart.com", "myntra.com", "swiggy.com", "zomato.com",
+    "makemytrip.com", "yatra.com", "cleartrip.com", "paytm.com",
+    "phonepe.com", "hdfcbank.com", "onlinesbi.sbi", "icicibank.com",
+    "axisbank.com", "kotak.com", "airindia.in", "goindigo.in",
+    "irctc.co.in", "redbus.in", "olacabs.com", "hotstar.com",
+    "sonyliv.com", "zee5.com", "jiocinema.com", "moneycontrol.com",
+    "bseindia.com", "nseindia.com", "bookmyshow.com", "policybazaar.com",
+    "nykaa.com", "ajio.com", "firstcry.com", "bigbasket.com",
+    "blinkit.com", "zepto.com", "upstox.com", "groww.in", "zerodha.com",
+    "airtel.in", "jio.com", "myvi.in", "vi.com", "bsnl.co.in",
+    "tataplay.com", "dishtv.in", "sbicard.com", "bajajfinserv.in",
+    "cred.club", "licindia.in", "epfindia.gov.in", "mseb.co.in",
+    "bescom.org", "uidai.gov.in", "cibil.com",
+}
 
-# Keep Indian "Rs"/"rupee" text from becoming a generic spam signal.
-CURRENCY_SYMBOLS = {'$', '\u00a3', '\u20ac', '\u20b9', 'btc', 'eth', 'usdt'}
+TRUSTED_TLDS = {
+    "com", "org", "net", "edu", "gov", "gov.in", "co.uk", "au",
+    "ca", "de", "fr", "in", "co.in", "sbi",
+}
 
 URL_FEATURE_COLS = [
-    'has_url', 'num_urls', 'has_http', 'has_https', 'suspicious_tld',
-    'max_url_len', 'has_ip_url', 'has_shortened_url', 'has_legit_domain'
+    "has_url", "num_urls", "has_http", "has_https", "suspicious_tld",
+    "max_url_len", "has_ip_url", "has_shortened_url", "has_legit_domain",
 ]
 
 TEXT_FEATURE_COLS = [
-    'num_chars', 'num_words', 'pct_upper', 'pct_digits', 'num_special',
-    'urgency_count', 'has_phone', 'has_currency'
+    "num_chars", "num_words", "pct_upper", "pct_digits", "num_special",
+    "urgency_count", "has_phone", "has_currency",
 ]
 
-
-LEGIT_DOMAINS = {
-    'amazon.com', 'amazon.co.uk', 'amazon.in', 'netflix.com', 'spotify.com', 'apple.com', 
-    'google.com', 'microsoft.com', 'paypal.com', 'ebay.com', 'walmart.com', 
-    'target.com', 'bestbuy.com', 'costco.com', 'fedex.com', 'ups.com', 'usps.com',
-    'airlines.com', 'ba.com', 'united.com', 'delta.com', 'jetblue.com',
-    'library.org', 'cvs.com', 'walgreens.com', 'riteaid.com', 'shopify.com',
-    'slack.com', 'zoom.us', 'gmail.com', 'outlook.com', 'yahoo.com',
-    # Famous Indian Websites
-    'flipkart.com', 'myntra.com', 'swiggy.com', 'zomato.com', 'makemytrip.com', 'yatra.com', 
-    'cleartrip.com', 'paytm.com', 'phonepe.com', 'hdfcbank.com', 'onlinesbi.sbi', 'icicibank.com', 
-    'axisbank.com', 'kotak.com', 'airindia.in', 'goindigo.in', 'irctc.co.in', 'redbus.in', 
-    'olacabs.com', 'hotstar.com', 'sonyliv.com', 'zee5.com', 'jiocinema.com', 
-    'timesofindia.indiatimes.com', 'hindustantimes.com', 'thehindu.com', 'ndtv.com', 'moneycontrol.com', 
-    'bseindia.com', 'nseindia.com', 'naukri.com', 'shaadi.com', 'bharatmatrimony.com',
-    'bookmyshow.com', 'policybazaar.com', 'nykaa.com', 'ajio.com', 'firstcry.com',
-    'bigbasket.com', 'blinkit.com', 'zepto.com', 'upstox.com', 'groww.in', 'zerodha.com',
-    # Frequent SMS Senders (Telecom, DTH, Credit Cards)
-    'airtel.in', 'jio.com', 'myvi.in', 'vi.com', 'bsnl.co.in', 'tataplay.com', 'dishtv.in',
-    'sbicard.com', 'bajajfinserv.in', 'cred.club'
+URGENCY_WORDS = {
+    "urgent", "winner", "won", "free", "prize", "claim", "cash",
+    "congratulations", "selected", "reward", "limited", "click",
+    "password", "invoice", "crypto", "bitcoin", "wallet", "suspended",
+    "blocked", "deactivated", "illegal", "arrested", "cyber", "fraud",
+    "hack", "jaldi", "turant", "abhi", "kijiye", "rupaye", "paisa",
+    "khata", "band", "inam", "jeeta", "loot", "kyc", "cashback",
+    "lucky", "gift", "redeem", "bijli", "officer", "helpline",
+    "fir", "giraftari", "arrest",
 }
 
-TRUSTED_TLDS = {'com', 'org', 'net', 'edu', 'gov', 'co.uk', 'au', 'ca', 'de', 'fr'}
+URGENCY_PHRASES = {
+    "act now", "action required", "share your otp", "last chance",
+    "court notice", "turant call", "abhi call", "aaj raat",
+    "kal subah", "power cut", "connection cut", "band ho jayega",
+}
 
+CURRENCY_SYMBOLS = {"$", "\u00a3", "\u20ac", "\u20b9", "btc", "eth", "usdt"}
 
-def _load_uci_dataset() -> pd.DataFrame:
-    """Load the UCI SMS Spam Collection via kagglehub."""
-    try:
-        import kagglehub
-        path = kagglehub.dataset_download("uciml/sms-spam-collection-dataset")
-        df = pd.read_csv(f"{path}/spam.csv", encoding='latin-1')
-        df = df[['v1', 'v2']].rename(columns={'v1': 'label_str', 'v2': 'message'})
-        df['label'] = df['label_str'].map({'ham': 0, 'spam': 1})
-        df = df[['message', 'label']].dropna()
-        print(f"  UCI SMS Spam Collection: {len(df)} messages loaded")
-        return df
-    except Exception as e:
-        print(f"  Warning: Failed to load UCI dataset: {e}")
-        return pd.DataFrame(columns=['message', 'label'])
+INDIAN_LEGIT_SMS = [
+    "HDFC Bank: Rs.25,000 credited to a/c XX4521 on 02-May. Avl bal: Rs.1,42,356. -HDFC Bank",
+    "Dear Customer, your ICICI a/c ending 7890 debited Rs.1,500 at AMAZON on 01-May. -ICICI Bank",
+    "Your SBI a/c XXXX1234 is credited with INR 5,000.00 on 01-May-25. Bal: INR 12,450.00. -SBI",
+    "Your OTP for SBI Net Banking login is 483921. Valid for 10 minutes. Do not share. -SBI",
+    "PhonePe OTP: 273948 for payment of Rs.150 to Zomato. Do not share. -PhonePe",
+    "Aadhaar OTP: 581234 for e-KYC verification. Valid 30 minutes. -UIDAI",
+    "Airtel Thanks! Your recharge of Rs.239 is successful. Validity: 28 days. Data: 1.5GB/day. -Airtel",
+    "Jio: Your recharge of Rs.299 is done. Validity 28 days, 2GB/day data. Enjoy! -Jio",
+    "Your electricity bill of Rs.1,234 for account 98765 is due on 10-May. Pay via BESCOM app.",
+    "Bijli Bill: Aapka MSEB bijli bill Rs.1,847 generate ho gaya hai. Due date: 10-Jun-26. Pay at mseb.co.in",
+    "Your Amazon order #402-9876543 is out for delivery today. Track: amzn.in/track -Amazon",
+    "Flipkart: Your order for boAt Earphones has been shipped. Tracking: fkrt.it/xyz -Flipkart",
+    "Zomato: Your order from Dominos has been picked up. ETA: 25 mins. -Zomato",
+    "Your IRCTC ticket PNR 4567891230 is confirmed. Train 12345 on 05-May. Seat: S4/32. -IRCTC",
+    "IndiGo: Your flight 6E-456 on 05-May is confirmed. PNR: ABCDEF. Web check-in open. -IndiGo",
+    "LIC: Your premium of Rs.5,000 for policy 123456789 is due on 10-May. Pay at licindia.in.",
+    "EPFO: Your PF balance as of 01-May-25 is Rs.2,45,678. Check on epfindia.gov.in. -EPFO",
+    "You received Rs.500 from Priya via UPI. UPI Ref: 123456789012. -Google Pay",
+    "PhonePe: Rs.1,200 sent to Ajay Kumar successfully. UPI Ref: 987654321. -PhonePe",
+    "Paytm: Rs.250 added to your wallet from HDFC Bank XX1234. Wallet Bal: Rs.430. -Paytm",
+]
 
-
-def _load_huggingface_spam_detection() -> pd.DataFrame:
-    """Load the Deysi/spam-detection-dataset from HuggingFace (no API key needed).
-    Contains ~10,900 messages with balanced spam/ham split.
-    """
-    try:
-        from datasets import load_dataset as hf_load
-        ds = hf_load("Deysi/spam-detection-dataset")
-        
-        # Combine train and test splits
-        dfs = []
-        for split_name in ds.keys():
-            split_df = ds[split_name].to_pandas()
-            dfs.append(split_df)
-        df = pd.concat(dfs, ignore_index=True)
-        
-        # Standardize column names
-        if 'text' in df.columns:
-            df = df.rename(columns={'text': 'message'})
-        
-        # Convert string labels to integers
-        label_map = {'spam': 1, 'not_spam': 0, 'ham': 0, 1: 1, 0: 0, '1': 1, '0': 0}
-        df['label'] = df['label'].map(label_map)
-        
-        df = df[['message', 'label']].dropna()
-        df['label'] = df['label'].astype(int)
-        df = df[df['label'].isin([0, 1])]
-        
-        print(f"  HuggingFace spam-detection-dataset: {len(df)} messages loaded")
-        return df
-    except Exception as e:
-        print(f"  Warning: Failed to load HuggingFace spam-detection dataset: {e}")
-        return pd.DataFrame(columns=['message', 'label'])
-
-
-def _load_kaggle_sms_spam() -> pd.DataFrame:
-    """Load the team-ai/sms-spam-dataset from Kaggle (may need auth)."""
-    try:
-        import kagglehub
-        path = kagglehub.dataset_download("team-ai/sms-spam-dataset")
-        
-        # Try common CSV names
-        import os
-        csv_files = [f for f in os.listdir(path) if f.endswith('.csv')]
-        if not csv_files:
-            print(f"  Warning: No CSV files found in Kaggle SMS spam dataset")
-            return pd.DataFrame(columns=['message', 'label'])
-        
-        df = pd.read_csv(f"{path}/{csv_files[0]}", encoding='latin-1')
-        
-        # Standardize columns (this dataset may have different column names)
-        col_lower = {c: c.lower() for c in df.columns}
-        df = df.rename(columns=col_lower)
-        
-        if 'v1' in df.columns and 'v2' in df.columns:
-            df = df.rename(columns={'v1': 'label_str', 'v2': 'message'})
-            df['label'] = df['label_str'].map({'ham': 0, 'spam': 1})
-        elif 'label' in df.columns and 'message' in df.columns:
-            if df['label'].dtype == object:
-                df['label'] = df['label'].map({'ham': 0, 'spam': 1})
-        elif 'label' in df.columns and 'text' in df.columns:
-            df = df.rename(columns={'text': 'message'})
-            if df['label'].dtype == object:
-                df['label'] = df['label'].map({'ham': 0, 'spam': 1})
-        elif 'sms' in df.columns:
-            df = df.rename(columns={'sms': 'message'})
-        
-        df = df[['message', 'label']].dropna()
-        df['label'] = df['label'].astype(int)
-        
-        print(f"  Kaggle SMS Spam Dataset: {len(df)} messages loaded")
-        return df
-    except Exception as e:
-        print(f"  Warning: Failed to load Kaggle SMS spam dataset: {e}")
-        return pd.DataFrame(columns=['message', 'label'])
-
-
-def _load_dbarbedillo_multilingual() -> pd.DataFrame:
-    """
-    Load all language columns from dbarbedillo/SMS_Spam_Multilingual_Collection_Dataset.
-    This dataset contains UCI SMS messages translated into multiple languages
-    (English, Hindi, French, German, etc.). ALL language variants are added
-    to the training pool so the model learns multilingual spam patterns.
-    """
-    try:
-        from datasets import load_dataset as hf_load
-        ds = hf_load("dbarbedillo/SMS_Spam_Multilingual_Collection_Dataset")
-
-        dfs_raw = []
-        for split_name in ds.keys():
-            dfs_raw.append(ds[split_name].to_pandas())
-        df = pd.concat(dfs_raw, ignore_index=True)
-
-        # Label column is 'labels' in this dataset (not 'label' or 'v1')
-        label_col = next((c for c in ['v1', 'label', 'labels'] if c in df.columns), None)
-        if label_col is None:
-            print(f"  dbarbedillo: no label column found. Got: {df.columns.tolist()}")
-            return pd.DataFrame(columns=['message', 'label'])
-
-        label_map = {'ham': 0, 'spam': 1, 0: 0, 1: 1, '0': 0, '1': 1}
-        import re as _re
-        devanagari = _re.compile(r'[\u0900-\u097F]')
-        skip = {label_col, 'v1', 'v2', 'label', 'labels'}
-        target_cols = []
-
-        for col in df.columns:
-            if col in skip:
-                continue
-            col_lower = col.lower()
-            if col_lower in ('text', 'text_en', 'en', 'english'):
-                target_cols.append(col)
-                continue
-            if col_lower in ('text_hi', 'hi', 'hindi') or col_lower.endswith('_hi'):
-                target_cols.append(col)
-                continue
-            sample = df[col].dropna().astype(str).head(20)
-            if any(devanagari.search(s) for s in sample):
-                target_cols.append(col)
-
-        if not target_cols:
-            target_cols = ['v2'] if 'v2' in df.columns else []
-
-        if not target_cols:
-            print(f"  dbarbedillo: no English/Hindi columns found. Got: {df.columns.tolist()}")
-            return pd.DataFrame(columns=['message', 'label'])
-
-        result_dfs = []
-        for col in target_cols:
-            lang_df = pd.DataFrame({'message': df[col].astype(str), 'label': df[label_col]})
-            lang_df['label'] = lang_df['label'].map(label_map)
-            lang_df = lang_df.dropna(subset=['message', 'label'])
-            lang_df['label'] = lang_df['label'].astype(int)
-            lang_df = lang_df[lang_df['message'].str.strip() != '']
-            result_dfs.append(lang_df)
-
-        if not result_dfs:
-            return pd.DataFrame(columns=['message', 'label'])
-
-        result = pd.concat(result_dfs, ignore_index=True)
-        print(f"  dbarbedillo (en+hi): {len(result)} rows from columns {target_cols}")
-        return result
-    except Exception as e:
-        print(f"  Warning: Failed to load dbarbedillo multilingual dataset: {e}")
-        return pd.DataFrame(columns=['message', 'label'])
-
-
-def _load_rajnathpatel_multilingual() -> pd.DataFrame:
-    """
-    Load rajnathpatel/multilingual-spam-data from Kaggle.
-    Contains real Hindi/Hinglish spam messages collected in India —
-    the most India-specific training signal in the pipeline.
-    """
-    try:
-        import kagglehub
-        import os
-        path = kagglehub.dataset_download("rajnathpatel/multilingual-spam-data")
-
-        csv_files = [f for f in os.listdir(path) if f.endswith('.csv')]
-        if not csv_files:
-            print("  Warning: No CSV files in rajnathpatel multilingual dataset")
-            return pd.DataFrame(columns=['message', 'label'])
-
-        raw_dfs = []
-        for csv_file in csv_files:
-            try:
-                raw_dfs.append(pd.read_csv(f"{path}/{csv_file}", encoding='latin-1'))
-            except Exception:
-                continue
-
-        if not raw_dfs:
-            return pd.DataFrame(columns=['message', 'label'])
-
-        df = pd.concat(raw_dfs, ignore_index=True)
-        df = df.rename(columns={c: c.lower().strip() for c in df.columns})
-
-        # Label column is 'labels' in this dataset
-        lbl_col = next((c for c in ['label', 'labels', 'v1', 'category', 'class'] if c in df.columns), None)
-        if lbl_col is None:
-            print(f"  rajnathpatel: no label column. Got: {df.columns.tolist()}")
-            return pd.DataFrame(columns=['message', 'label'])
-
-        label_map = {'ham': 0, 'spam': 1, 0: 0, 1: 1, '0': 0, '1': 1}
-        skip = {lbl_col, 'label', 'labels', 'v1', 'category', 'class'}
-
-        # Load English (text) and Hindi (text_hi) columns
-        msg_cols = []
-        for col in df.columns:
-            if col in skip:
-                continue
-            if col in ('text', 'message', 'sms', 'v2', 'text_en', 'en'):
-                msg_cols.append(col)
-            elif col in ('text_hi', 'hi', 'hindi') or col.endswith('_hi'):
-                msg_cols.append(col)
-
-        if not msg_cols:
-            print(f"  rajnathpatel: no message columns found. Got: {df.columns.tolist()}")
-            return pd.DataFrame(columns=['message', 'label'])
-
-        result_dfs = []
-        for col in msg_cols:
-            r = pd.DataFrame({'message': df[col].astype(str), 'label': df[lbl_col]})
-            r['label'] = r['label'].map(label_map)
-            r = r.dropna(subset=['message', 'label'])
-            r['label'] = r['label'].astype(int)
-            r = r[r['message'].str.strip() != '']
-            result_dfs.append(r)
-
-        result = pd.concat(result_dfs, ignore_index=True)
-        print(f"  rajnathpatel multilingual: {len(result)} rows from {msg_cols} "
-              f"({int(result['label'].sum())} spam, {(result['label']==0).sum()} ham)")
-        return result.reset_index(drop=True)
-    except Exception as e:
-        print(f"  Warning: Failed to load rajnathpatel multilingual dataset: {e}")
-        return pd.DataFrame(columns=['message', 'label'])
-def _load_ngadou_spam_sms() -> pd.DataFrame:
-    """Load the Ngadou/Spam_SMS dataset from HuggingFace."""
-    try:
-        from datasets import load_dataset as hf_load
-        ds = hf_load("Ngadou/Spam_SMS")['train']
-        df = ds.to_pandas()
-        if 'email' in df.columns:
-            df = df.rename(columns={'email': 'message'})
-        df = df[['message', 'label']].dropna()
-        df['label'] = df['label'].astype(int)
-        print(f"  Ngadou/Spam_SMS Dataset: {len(df)} messages loaded")
-        return df
-    except Exception as e:
-        print(f"  Warning: Failed to load Ngadou/Spam_SMS dataset: {e}")
-        return pd.DataFrame(columns=['message', 'label'])
-
-
-def _deduplicate(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove duplicate messages by normalized text content."""
-    df = df.copy()
-    df['_norm'] = df['message'].str.lower().str.strip().str.replace(r'\s+', ' ', regex=True)
-    df = df.drop_duplicates(subset='_norm', keep='first')
-    df = df.drop(columns=['_norm'])
-    return df.reset_index(drop=True)
-
-
-def load_dataset() -> pd.DataFrame:
-    """Load and combine SMS spam datasets from multiple sources."""
-    print("Loading datasets from multiple sources...")
-    
-    # Load from all sources
-    dfs = []
-    
-    # Source 1: UCI (primary, should always work)
-    uci_df = _load_uci_dataset()
-    if len(uci_df) > 0:
-        dfs.append(uci_df)
-    
-    # Source 2: HuggingFace spam detection dataset (no auth needed, ~10.9k messages)
-    hf_df = _load_huggingface_spam_detection()
-    if len(hf_df) > 0:
-        dfs.append(hf_df)
-    
-    # Source 3: Kaggle SMS Spam (may fail without auth — that's OK)
-    kaggle_df = _load_kaggle_sms_spam()
-    if len(kaggle_df) > 0:
-        dfs.append(kaggle_df)
-        
-    # Source 4: Ngadou/Spam_SMS (for out-of-distribution robustness)
-    ngadou_df = _load_ngadou_spam_sms()
-    if len(ngadou_df) > 0:
-        dfs.append(ngadou_df)
-
-    # Source 5: dbarbedillo multilingual (all language columns — Hindi, French, German, etc.)
-    dbarbedillo_df = _load_dbarbedillo_multilingual()
-    if len(dbarbedillo_df) > 0:
-        dfs.append(dbarbedillo_df)
-
-    # Source 6: rajnathpatel multilingual (real Hindi/Hinglish Indian spam)
-    rajnathpatel_df = _load_rajnathpatel_multilingual()
-    if len(rajnathpatel_df) > 0:
-        dfs.append(rajnathpatel_df)
-    
-    if not dfs:
-        raise RuntimeError("Failed to load any dataset! Check your internet connection.")
-    
-    # Combine and deduplicate
-    df = pd.concat(dfs, ignore_index=True)
-    before_dedup = len(df)
-    df = _deduplicate(df)
-    after_dedup = len(df)
-    
-    if before_dedup != after_dedup:
-        print(f"  Removed {before_dedup - after_dedup} duplicate messages")
-    
-    # Extract features and clean text
-    url_feats_list = []
-    text_feats_list = []
-    cleaned_messages = []
-
-    for msg in df['message']:
-        url_feats = url_features(str(msg))
-        text_feats = text_features(str(msg))
-        cleaned = clean_text(str(msg))
-
-        url_feats_list.append(url_feats)
-        text_feats_list.append(text_feats)
-        cleaned_messages.append(cleaned)
-
-    url_df = pd.DataFrame(url_feats_list)
-    text_df = pd.DataFrame(text_feats_list)
-
-    df = pd.concat([df.reset_index(drop=True), url_df, text_df], axis=1)
-    df['message'] = cleaned_messages
-
-    spam_count = int(df['label'].sum())
-    ham_count = len(df) - spam_count
-    print(f"\nDataset loaded: {len(df)} messages ({spam_count} spam, {ham_count} ham)")
-
-    return df
+URL_RE = re.compile(r"(?:https?://|www\.)[^\s<>'\"]+", re.IGNORECASE)
+BARE_DOMAIN_RE = re.compile(
+    r"\b(?:[a-zA-Z0-9-]+\.)+(?:com|org|net|edu|gov|gov\.in|co\.uk|co\.in|in|io|co|sbi|club|xyz|top|click|link|online|site|info|biz)\b",
+    re.IGNORECASE,
+)
+PHONE_RE = re.compile(r"(?:\+91[-\s]?)?\d[\d\s-]{8,}\d")
+TOKEN_RE = re.compile(r"[a-z]+|[\u0900-\u097F]+")
 
 
 def get_feature_columns() -> list[str]:
     return URL_FEATURE_COLS + TEXT_FEATURE_COLS
 
 
-def split_dataset(df, seed=42) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    train_df, temp_df = train_test_split(df, test_size=0.3, stratify=df['label'], random_state=seed)
-    val_df, test_df = train_test_split(temp_df, test_size=0.5, stratify=temp_df['label'], random_state=seed)
-    return train_df.reset_index(drop=True), val_df.reset_index(drop=True), test_df.reset_index(drop=True)
+def clean_text(text: str, remove_urls: bool = False) -> str:
+    text = "" if text is None else str(text)
+    if remove_urls:
+        text = URL_RE.sub("", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def extract_urls(text: str) -> list[str]:
-    url_pattern = r'(?:https?://|www\.)[^\s]+'
-    urls = re.findall(url_pattern, text, re.IGNORECASE)
-    
-    domain_pattern = r'(?:[a-zA-Z0-9-]+\.)+(?:com|org|net|edu|gov|co\.uk|au|ca|in|io|co)'
-    domain_urls = re.findall(domain_pattern, text, re.IGNORECASE)
-    urls.extend(domain_urls)
-    
-    return list(set(urls))
+    text = "" if text is None else str(text)
+    urls = URL_RE.findall(text)
+    urls.extend(BARE_DOMAIN_RE.findall(text))
+    cleaned = []
+    for url in urls:
+        cleaned.append(url.strip(".,;:!?)\"]}'").lower())
+    return sorted(set(u for u in cleaned if u))
+
+
+def _registered_domain(url: str) -> tuple[str, str]:
+    ext = tldextract.extract(url)
+    domain = ext.domain.lower()
+    suffix = ext.suffix.lower()
+    full_domain = f"{domain}.{suffix}".strip(".")
+    return full_domain, suffix
 
 
 def url_features(text: str) -> dict:
     urls = extract_urls(text)
 
-    has_url = 1 if urls else 0
-    num_urls = len(urls)
-    has_http = 1 if any('http:' in u.lower() for u in urls) else 0
-    has_https = 1 if any('https:' in u.lower() for u in urls) else 0
-
     suspicious_tld = 0
-    trusted_tld_count = 0
-    max_url_len = 0
     has_ip_url = 0
     has_shortened_url = 0
     has_legit_domain = 0
+    max_url_len = 0
 
     for url in urls:
         max_url_len = max(max_url_len, len(url))
+        full_domain, suffix = _registered_domain(url)
 
-        try:
-            extracted = tldextract.extract(url)
-            domain = extracted.domain.lower() if extracted.domain else ''
-            suffix = extracted.suffix.lower() if extracted.suffix else ''
-            
-            if suffix in SUSPICIOUS_TLDS:
-                suspicious_tld = 1
-            if suffix in TRUSTED_TLDS:
-                trusted_tld_count += 1
-            
-            # Check full domain (domain.suffix) against shorteners
-            full_domain = f"{domain}.{suffix}" if suffix else domain
-            if full_domain in URL_SHORTENERS:
-                has_shortened_url = 1
-            # Use Google Safe Browsing API to check domain legitimacy
-            if is_domain_legitimate(full_domain):
-                has_legit_domain = 1
-        except:
-            pass
-
-        if re.match(r'https?://\d+\.\d+\.\d+\.\d+', url, re.IGNORECASE):
+        if suffix in SUSPICIOUS_TLDS:
+            suspicious_tld = 1
+        if full_domain in URL_SHORTENERS:
+            has_shortened_url = 1
+        if full_domain in LEGIT_DOMAINS or suffix in TRUSTED_TLDS:
+            has_legit_domain = 1
+        if re.search(r"https?://\d{1,3}(?:\.\d{1,3}){3}", url, re.IGNORECASE):
             has_ip_url = 1
 
     return {
-        'has_url': has_url,
-        'num_urls': num_urls,
-        'has_http': has_http,
-        'has_https': has_https,
-        'suspicious_tld': suspicious_tld,
-        'max_url_len': max_url_len,
-        'has_ip_url': has_ip_url,
-        'has_shortened_url': has_shortened_url,
-        'has_legit_domain': has_legit_domain
+        "has_url": int(bool(urls)),
+        "num_urls": len(urls),
+        "has_http": int(any(u.startswith("http://") for u in urls)),
+        "has_https": int(any(u.startswith("https://") for u in urls)),
+        "suspicious_tld": suspicious_tld,
+        "max_url_len": max_url_len,
+        "has_ip_url": has_ip_url,
+        "has_shortened_url": has_shortened_url,
+        "has_legit_domain": has_legit_domain,
     }
 
 
 def text_features(text: str) -> dict:
+    text = "" if text is None else str(text)
+    lowered = text.lower()
+    tokens = TOKEN_RE.findall(lowered)
+
     num_chars = len(text)
-    num_words = len(text.split())
-
     upper_count = sum(1 for c in text if c.isupper())
-    pct_upper = upper_count / num_chars if num_chars > 0 else 0.0
-
     digit_count = sum(1 for c in text if c.isdigit())
-    pct_digits = digit_count / num_chars if num_chars > 0 else 0.0
-
-    special_count = sum(1 for c in text if c in '!@#$%^&*()_+-=[]{}|;:,.<>?')
-    num_special = special_count
-
-    words = text.lower().split()
-    urgency_count = sum(1 for w in words if w in URGENCY_WORDS)
-
-    phone_pattern = r'(?:\+91[-\s]?)?\d[\d\s-]{8,}\d'
-    has_phone = 1 if re.search(phone_pattern, text) else 0
-
-    has_currency = 1 if any(s in text.lower() for s in CURRENCY_SYMBOLS) else 0
+    special_count = sum(1 for c in text if c in "!@#$%^&*()_+-=[]{}|;:,.<>?")
+    urgency_count = sum(1 for token in tokens if token in URGENCY_WORDS)
+    urgency_count += sum(1 for phrase in URGENCY_PHRASES if phrase in lowered)
 
     return {
-        'num_chars': num_chars,
-        'num_words': num_words,
-        'pct_upper': pct_upper,
-        'pct_digits': pct_digits,
-        'num_special': num_special,
-        'urgency_count': urgency_count,
-        'has_phone': has_phone,
-        'has_currency': has_currency
+        "num_chars": num_chars,
+        "num_words": len(tokens),
+        "pct_upper": upper_count / num_chars if num_chars else 0.0,
+        "pct_digits": digit_count / num_chars if num_chars else 0.0,
+        "num_special": special_count,
+        "urgency_count": urgency_count,
+        "has_phone": int(bool(PHONE_RE.search(text))),
+        "has_currency": int(any(symbol in lowered for symbol in CURRENCY_SYMBOLS)),
     }
 
 
-def clean_text(text: str, remove_urls: bool = False) -> str:
-    if remove_urls:
-        text = re.sub(r'(?:https?://|www\.)[^\s]+', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
+def _standardize_label(value) -> Optional[int]:
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return None
+    text = str(value).strip().lower()
+    mapping = {
+        "spam": 1, "scam": 1, "phishing": 1, "smishing": 1, "1": 1, "true": 1,
+        "ham": 0, "safe": 0, "legit": 0, "legitimate": 0, "not_spam": 0,
+        "0": 0, "false": 0,
+    }
+    return mapping.get(text)
+
+
+def _standardize_frame(df: pd.DataFrame, message_cols: Iterable[str], label_cols: Iterable[str]) -> pd.DataFrame:
+    lower_map = {c.lower().strip(): c for c in df.columns}
+    msg_col = next((lower_map[c] for c in message_cols if c in lower_map), None)
+    lbl_col = next((lower_map[c] for c in label_cols if c in lower_map), None)
+
+    if msg_col is None or lbl_col is None:
+        return pd.DataFrame(columns=["message", "label"])
+
+    result = pd.DataFrame({
+        "message": df[msg_col].astype(str),
+        "label": df[lbl_col].apply(_standardize_label),
+    })
+    result = result.dropna(subset=["message", "label"])
+    result["label"] = result["label"].astype(int)
+    result = result[result["message"].str.strip() != ""]
+    return result[["message", "label"]].reset_index(drop=True)
+
+
+def _load_local_spam_csv() -> pd.DataFrame:
+    path = DATA_DIR / "spam.csv"
+    if not path.exists():
+        return pd.DataFrame(columns=["message", "label"])
+    try:
+        df = pd.read_csv(path, encoding="latin-1")
+        result = _standardize_frame(df, ["v2", "message", "text", "sms"], ["v1", "label", "labels", "category"])
+        print(f"  Local UCI spam.csv: {len(result)} messages loaded")
+        return result
+    except Exception as exc:
+        print(f"  Warning: failed to load local spam.csv: {exc}")
+        return pd.DataFrame(columns=["message", "label"])
+
+
+def _load_local_parquet() -> pd.DataFrame:
+    frames = []
+    for path in sorted(DATA_DIR.glob("*.parquet")):
+        try:
+            raw = pd.read_parquet(path)
+            result = _standardize_frame(raw, ["message", "text", "sms", "email"], ["label", "labels", "category", "class"])
+            if len(result):
+                print(f"  Local {path.name}: {len(result)} messages loaded")
+                frames.append(result)
+        except Exception as exc:
+            print(f"  Warning: failed to load {path.name}: {exc}")
+    if not frames:
+        return pd.DataFrame(columns=["message", "label"])
+    return pd.concat(frames, ignore_index=True)
+
+
+def _load_synthetic_indian_legit() -> pd.DataFrame:
+    print(f"  Synthetic Indian legit SMS: {len(INDIAN_LEGIT_SMS)} messages loaded")
+    return pd.DataFrame({"message": INDIAN_LEGIT_SMS, "label": 0})
+
+
+def _load_huggingface_dataset(name: str) -> pd.DataFrame:
+    try:
+        from datasets import load_dataset as hf_load
+
+        ds = hf_load(name)
+        frames = []
+        for split_name in ds.keys():
+            raw = ds[split_name].to_pandas()
+            frames.append(_standardize_frame(raw, ["message", "text", "sms", "email"], ["label", "labels", "category", "class"]))
+        result = pd.concat(frames, ignore_index=True)
+        print(f"  HuggingFace {name}: {len(result)} messages loaded")
+        return result
+    except Exception as exc:
+        print(f"  Warning: failed to load HuggingFace {name}: {exc}")
+        return pd.DataFrame(columns=["message", "label"])
+
+
+def _load_multilingual_hf(name: str) -> pd.DataFrame:
+    try:
+        from datasets import load_dataset as hf_load
+
+        ds = hf_load(name)
+        raw = pd.concat([ds[s].to_pandas() for s in ds.keys()], ignore_index=True)
+        lower_map = {c.lower().strip(): c for c in raw.columns}
+        label_col = next((lower_map[c] for c in ["label", "labels", "v1", "category", "class"] if c in lower_map), None)
+        if label_col is None:
+            return pd.DataFrame(columns=["message", "label"])
+
+        message_cols = []
+        for col in raw.columns:
+            lower = col.lower().strip()
+            if lower in {"text", "message", "sms", "v2", "text_en", "en", "text_hi", "hi", "hindi"} or lower.endswith("_hi"):
+                message_cols.append(col)
+
+        frames = []
+        for col in message_cols:
+            frame = pd.DataFrame({"message": raw[col].astype(str), "label": raw[label_col].apply(_standardize_label)})
+            frame = frame.dropna(subset=["message", "label"])
+            frame["label"] = frame["label"].astype(int)
+            frame = frame[frame["message"].str.strip() != ""]
+            frames.append(frame[["message", "label"]])
+
+        result = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["message", "label"])
+        print(f"  Multilingual {name}: {len(result)} messages loaded")
+        return result
+    except Exception as exc:
+        print(f"  Warning: failed to load multilingual {name}: {exc}")
+        return pd.DataFrame(columns=["message", "label"])
+
+
+def _deduplicate(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["_norm"] = df["message"].astype(str).str.lower().str.strip().str.replace(r"\s+", " ", regex=True)
+    df = df.drop_duplicates(subset="_norm", keep="first").drop(columns=["_norm"])
+    return df.reset_index(drop=True)
+
+
+def _add_features(df: pd.DataFrame) -> pd.DataFrame:
+    url_rows = []
+    text_rows = []
+    cleaned = []
+
+    for message in df["message"]:
+        message = str(message)
+        url_rows.append(url_features(message))
+        text_rows.append(text_features(message))
+        cleaned.append(clean_text(message))
+
+    result = pd.concat(
+        [df.reset_index(drop=True), pd.DataFrame(url_rows), pd.DataFrame(text_rows)],
+        axis=1,
+    )
+    result["message"] = cleaned
+    return result
+
+
+def load_dataset(use_remote: Optional[bool] = None) -> pd.DataFrame:
+    """
+    Load SMS datasets and return message, label, and feature columns.
+
+    Remote loaders are enabled by default. Set SCAMSHIELD_USE_REMOTE_DATA=0 or
+    pass use_remote=False to train only on local files plus synthetic examples.
+    """
+    if use_remote is None:
+        use_remote = os.getenv("SCAMSHIELD_USE_REMOTE_DATA", "1").lower() not in {"0", "false", "no"}
+
+    print("Loading datasets...")
+    frames = [
+        _load_local_spam_csv(),
+        _load_local_parquet(),
+        _load_synthetic_indian_legit(),
+    ]
+
+    if use_remote:
+        frames.extend([
+            _load_huggingface_dataset("Deysi/spam-detection-dataset"),
+            _load_huggingface_dataset("Ngadou/Spam_SMS"),
+            _load_multilingual_hf("dbarbedillo/SMS_Spam_Multilingual_Collection_Dataset"),
+        ])
+
+    frames = [frame for frame in frames if len(frame) > 0]
+    if not frames:
+        raise RuntimeError("No datasets loaded. Check local data files or enable remote datasets.")
+
+    df = pd.concat(frames, ignore_index=True)
+    before = len(df)
+    df = _deduplicate(df)
+    if before != len(df):
+        print(f"  Removed {before - len(df)} duplicate messages")
+
+    df = _add_features(df)
+    spam_count = int(df["label"].sum())
+    ham_count = len(df) - spam_count
+    print(f"\nDataset loaded: {len(df)} messages ({spam_count} spam, {ham_count} ham)")
+    return df
+
+
+def split_dataset(df: pd.DataFrame, seed: int = 42) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    train_df, temp_df = train_test_split(
+        df,
+        test_size=0.30,
+        stratify=df["label"],
+        random_state=seed,
+    )
+    val_df, test_df = train_test_split(
+        temp_df,
+        test_size=0.50,
+        stratify=temp_df["label"],
+        random_state=seed,
+    )
+    return train_df.reset_index(drop=True), val_df.reset_index(drop=True), test_df.reset_index(drop=True)

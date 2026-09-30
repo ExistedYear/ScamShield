@@ -1,235 +1,207 @@
 """
-predictor.py — Multilingual SmishingPredictor
-Language-aware ensemble: XLM-RoBERTa neural score + Hinglish/Hindi rule-based score.
+Prediction engine for ScamShield.
 
-For English: trust neural model fully.
-For Hinglish/Hindi: blend neural (55%) + rule-based (45%) because training data
-for organic Hinglish was sparse, so rules compensate for weak neural signal.
+The neural model remains the primary classifier. Rules are used only as:
+  - spam floors: raise confidence when explicit phishing evidence is present
+  - ham ceilings: lower confidence for clear legitimate transactional SMS
+
+This avoids the old failure mode where a weak Hindi/Hinglish rule score could
+average down a strong neural spam prediction.
 """
 
-import torch
+import os
+import re
+import sys
+from typing import Dict, Iterable, List, Tuple
+
 import numpy as np
-import os, sys, re
+import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from utils.data_loader import url_features, text_features, clean_text, get_feature_columns
-from models.model import SmishingDetector, get_tokenizer, MAX_LEN
-
-
-# ── Language detection ────────────────────────────────────────────────────────
-
-_DEVANAGARI = re.compile(r'[\u0900-\u097F]')
-_HINGLISH_MARKERS = {
-    'aapka', 'aapke', 'aap', 'mera', 'meri', 'tumhara', 'hamara',
-    'karo', 'karein', 'karna', 'kar', 'kiya', 'kijiye',
-    'hai', 'hain', 'tha', 'thi', 'hoga', 'hogi', 'jayega', 'jayegi',
-    'nahi', 'nahin', 'bhi', 'aur', 'ke', 'ki', 'ka',
-    'mein', 'se', 'par', 'ko', 'ne', 'tak', 'wala', 'wali',
-    'turant', 'jaldi', 'abhi', 'raat', 'subah', 'aaj', 'kal',
-    'rupaye', 'paisa', 'lakh', 'hazaar', 'crore',
-}
-
-
-def detect_language(text: str) -> tuple:
-    """Returns (language, confidence) — 'english', 'hindi', or 'hinglish'."""
-    if _DEVANAGARI.search(text):
-        return 'hindi', 0.95
-    words = set(text.lower().split())
-    hits = len(words & _HINGLISH_MARKERS)
-    if hits >= 3:
-        return 'hinglish', min(0.5 + hits * 0.1, 0.95)
-    if hits >= 1:
-        return 'hinglish', 0.4
-    return 'english', 0.9
-
-
-# ── Hinglish / Hindi rule-based scam scorer ───────────────────────────────────
-
-_THREAT_PATTERNS = [
-    # Service disconnection threats
-    r'connect[io]+n\s*(cut|band)',
-    r'bijli\s*(cut|band|kataegi|kategi|nahi\s*aayegi)',
-    r'power\s*(cut|band)',
-    r'band\s*ho\s*(jayega|jaega|jaayega)',
-    r'cut\s*kar\s*(diya|denge|diya\s*jayega)',
-    r'electric\w*\s*(cut|band|disconnect)',
-    # Legal / government threats (expanded)
-    r'giraftari|graftari',
-    r'court\s*noti(ce|s)',
-    r'fir\s*(darj|darz|file)',
-    r'cyber\s*crime',
-    r'income\s*tax',
-    r'aadhaar\s*(card\s*)?(block|band|suspend|deactivat)',  # fixed: allows "Aadhaar card block"
-    r'sim\s*(block|band|deactivat)',
-    r'digital\s*arrest',                           # NEW: "digital arrest" scam
-    r'money\s*launderin',                          # NEW: money laundering threat
-    r'warrant\s*(jari|issue|nikl)',                # NEW: warrant issued
-    r'case\s*(darj|darz|file|register)',           # NEW: "case darj hua" pattern
-    r'(cbi|ed|police)\s*(notice|action|raid)',     # NEW: authority action
-    # Banking / financial fraud (expanded)
-    r'account\s*(block|band|freez|suspend)',
-    r'khata\s*(band|suspend|block|freez)',
-    r'kyc\s*(update|kijiye|verify|complete)',
-    r'pension\s*(rok|band|cancel)',
-    r'bank.*suspend|suspend.*bank',
-    r'upi\s*(block|band|suspend)',
-    r'upi\s*(id\s*)?(expir|expire|deactivat)',     # NEW: "UPI expire" scam
-    r'debit\s*card\s*(block|band|suspend)',
-    r'pan\s*(card\s*)?(block|deactivat|suspend)',  # NEW: PAN card deactivation
-]
-
-_AUTHORITY_WORDS = {
-    'officer', 'department', 'ministry', 'police', 'court',
-    'trai', 'cbi', 'enforcement', 'inspector', 'collector',
-    'helpline', 'nodal', 'superintendent',
-    # Banks / financial authority
-    'sbi', 'hdfc', 'icici', 'axis', 'kotak', 'pnb', 'rbi',
-    'bank', 'ifsc', 'nbfc',
-}
-
-_HINGLISH_URGENCY = {
-    'turant', 'jaldi', 'abhi', 'aaj', 'kal', 'antim', 'last',
-}
-
-_PHONE_RE = re.compile(r'(?:\+91[-\s]?)?\d[\d\s\-]{8,}\d')
-_DEADLINE_RE = re.compile(
-    r'aaj\s*raat|kal\s*subah|pm\s*tak|am\s*tak|\d{1,2}:\d{2}\s*(am|pm|baje)'
-    r'|\d+\s*(ghante|minute|mint)\s*(mein|tak|ke\s*andar)',  # NEW: "2 ghante mein"
-    re.IGNORECASE
+from models.model import MAX_LEN, SmishingDetector, get_tokenizer
+from utils.data_loader import (
+    clean_text,
+    extract_urls,
+    get_feature_columns,
+    text_features,
+    url_features,
 )
 
 
-# ── English rule-based layers ─────────────────────────────────────────────────
-# These correct the neural model's blind spots on English messages.
-# Spam floor: when rules detect clear phishing, ensure a minimum probability.
-# Ham ceiling: when rules detect clear legit transactions, cap probability.
+DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
+TOKEN_RE = re.compile(r"[a-z]+|[\u0900-\u097F]+")
 
-_EN_SPAM_PATTERNS = [
-    # Account/service suspension phishing
-    (r'account.{0,12}(suspend|block|freez|terminat|clos)', 0.40),
-    (r'(suspend|cancel|terminat)\s*(your\s*)?(subscription|netflix|amazon\s*prime|membership)', 0.40),
-    # Financial / tax phishing
-    (r'(tax|hmrc|irs|income\s*tax)\s*(refund|rebate|return)', 0.45),
-    (r'customs?\s*(fee|charge|duty|clearance|payment)', 0.35),
-    # Delivery fee scams
-    (r'(parcel|package|shipment|delivery)\s*(fail|unable|could\s*not|attempt\s*fail|held)', 0.35),
-    # Payment / credential update
-    (r'(update|verify|confirm)\s*(your\s*)?(payment|billing|card\s*detail|account\s*detail)', 0.35),
-    (r'click\s*here\s*to\s*(verify|update|claim|reactivate|activate)', 0.25),
-    (r'(claim|collect)\s*(before|within|it\s*expires|now\s*at\s*http)', 0.25),
-    # Prize / lottery scams
-    (r'(win|won|winner|selected|chosen)\s*.{0,40}(prize|reward|gift\s*card|\$[\d,]+|lottery)', 0.35),
-    (r'lucky\s*(draw|winner|number)', 0.35),
-    # Loan scams
-    (r'loan\s*(approv|offer|eligible|sanction).{0,60}(contact|call|whatsapp|apply)', 0.35),
-    # ID / document deactivation (PAN, Aadhaar, SIM)
-    (r'pan\s*card.{0,20}(block|deactivat|suspend|reactivat|cancel)', 0.40),
-    (r'(deactivat|block).{0,40}(reactivat|verify|update).{0,20}http', 0.35),
+HINGLISH_MARKERS = {
+    "aap", "aapka", "aapke", "apka", "mera", "meri", "tumhara", "hamara",
+    "karo", "karein", "karna", "kar", "kiya", "kijiye", "dijiye",
+    "hai", "hain", "tha", "thi", "hoga", "hogi", "jayega", "jayegi",
+    "nahi", "nahin", "bhi", "aur", "ke", "ki", "ka", "mein", "se",
+    "par", "ko", "ne", "tak", "wala", "wali", "turant", "jaldi",
+    "abhi", "raat", "subah", "aaj", "kal", "rupaye", "paisa",
+    "khata", "bijli", "band",
+}
+
+LEGIT_BRANDS = {
+    "airtel", "jio", "bsnl", "vi", "vodafone", "idea", "amazon",
+    "flipkart", "swiggy", "zomato", "zepto", "blinkit", "meesho",
+    "myntra", "irctc", "uidai", "epfo", "hdfc", "icici", "sbi",
+    "axis", "kotak", "paytm", "phonepe", "gpay",
+}
+
+
+def detect_language(text: str) -> Tuple[str, float]:
+    """Return english, hinglish, or hindi with a simple confidence score."""
+    if DEVANAGARI_RE.search(text):
+        return "hindi", 0.95
+
+    tokens = set(re.findall(r"[a-z]+", text.lower()))
+    hits = len(tokens & HINGLISH_MARKERS)
+    if hits >= 3:
+        return "hinglish", min(0.55 + hits * 0.08, 0.95)
+    if hits:
+        return "hinglish", 0.45
+    return "english", 0.90
+
+
+SPAM_PATTERNS: List[Tuple[str, float]] = [
+    # Account, card, identity, and service suspension
+    (r"account.{0,24}(suspend|block|freez|clos|terminat|deactivat)", 0.45),
+    (r"(suspend|block|freez|terminat|deactivat).{0,30}(account|card|upi|sim|pan|aadhaar)", 0.45),
+    (r"(pan|aadhaar|aadhar)\s*(card\s*)?.{0,24}(block|suspend|deactivat|reactivat)", 0.45),
+    (r"upi\s*(id\s*)?.{0,18}(expir|deactivat|block|suspend)", 0.42),
+    (r"kyc.{0,20}(update|verify|complete|pending|expire)", 0.38),
+    (r"(verify|update|confirm).{0,30}(account|payment|billing|card|kyc|details)", 0.35),
+    # Delivery, fees, refunds, and prizes
+    (r"(parcel|package|shipment|delivery).{0,35}(fail|held|unable|fee|customs|returned)", 0.35),
+    (r"(tax|hmrc|irs|income\s*tax).{0,30}(refund|rebate|return|pending)", 0.40),
+    (r"(win|won|winner|selected|chosen|lucky).{0,45}(prize|reward|gift|lottery|cash|rs\.?|inr)", 0.45),
+    (r"(claim|collect|redeem).{0,30}(now|before|within|expires|prize|reward)", 0.35),
+    (r"loan.{0,35}(approved|eligible|sanction|offer).{0,40}(call|contact|whatsapp|apply)", 0.38),
+    # Hinglish social engineering
+    (r"bijli.{0,25}(cut|band|kataegi|kategi|nahi\s*aayegi)", 0.45),
+    (r"(electricity|power|connection).{0,24}(cut|band|disconnect)", 0.42),
+    (r"band\s*ho\s*(jayega|jaega|jaayega)", 0.35),
+    (r"khata.{0,20}(band|block|suspend|freez)", 0.42),
+    (r"(digital\s*arrest|money\s*launder|warrant|fir|giraftari|graftari)", 0.48),
+    (r"(cbi|ed|police|income\s*tax).{0,35}(notice|case|action|raid|fir|arrest)", 0.42),
+    # Devanagari Hindi equivalents, written as escapes to keep the file stable.
+    ("\u092c\u093f\u091c\u0932\u0940.{0,24}(\u0915\u091f|\u092c\u0902\u0926)", 0.45),
+    ("\u0915\u0928\u0947\u0915\u094d\u0936\u0928.{0,20}(\u0915\u091f|\u092c\u0902\u0926)", 0.42),
+    ("\u0916\u093e\u0924\u093e.{0,20}(\u092c\u0902\u0926|\u092c\u094d\u0932\u0949\u0915|\u092b\u094d\u0930\u0940\u091c)", 0.42),
+    ("(\u0915\u0947\u0935\u093e\u0908\u0938\u0940|kyc).{0,20}(\u0905\u092a\u0921\u0947\u091f|\u092a\u0942\u0930\u093e|\u0935\u0947\u0930\u093f\u092b)", 0.38),
+    ("\u0906\u0927\u093e\u0930.{0,20}(\u092c\u094d\u0932\u0949\u0915|\u092c\u0902\u0926|\u0928\u093f\u0932\u0902\u092c\u093f\u0924)", 0.45),
+    ("\u092a\u0948\u0928.{0,20}(\u092c\u094d\u0932\u0949\u0915|\u092c\u0902\u0926|\u0928\u093f\u0937\u094d\u0915\u094d\u0930\u093f\u092f)", 0.45),
+    ("\u0917\u093f\u0930\u092b\u094d\u0924\u093e\u0930|\u090f\u092b\u0906\u0908\u0906\u0930|\u0935\u093e\u0930\u0902\u091f|\u0921\u093f\u091c\u093f\u091f\u0932\\s*\u0905\u0930\u0947\u0938\u094d\u091f", 0.48),
 ]
 
-_EN_HAM_PATTERNS = [
-    # Shipping / delivery confirmations (legit e-commerce)
-    (r'(order|shipment|package).{0,40}(shipped|dispatched|delivered|out\s*for\s*delivery)', 0.55),
-    (r'(estimated|expected)\s*(delivery|arrival)', 0.30),
-    (r'track\s*(your\s*)?(order|shipment|package)\s*(at|here)', 0.30),
-    # OTP / banking transactions
-    (r'(otp|one[\s-]?time\s*(pass\w*|pin))\s*(for|is)\s*[\w\s]{1,60}(login|transaction|transfer|payment)', 0.55),
-    (r'do\s*not\s*(share|give)\s*(this|your|the)\s*(otp|pin|code|password)', 0.60),
-    # Credit / debit confirmations (legit bank SMS)
-    (r'(rs\.?|₹|inr)\s*[\d,]+\.?\d*\s*(credited|debited|received|paid)', 0.50),
-    (r'(avl|available|current)\s*(bal|balance)\s*[:\-]?\s*(rs|₹|inr)', 0.45),
-    # Recharge / telecom
-    (r'recharge\s*of\s*(rs\.?|₹)\s*[\d,]+\s*(is\s*)?(successful|done|activated)', 0.55),
-    (r'(sim|5g|4g|network|plan)\s*(upgrade|migrat|activat)', 0.35),
-    (r'visit\s*(your\s*)?(nearest|our)\s*(store|centre|outlet|branch)', 0.35),
-    (r'eligible\s*for\s*(a\s*)?(free\s*)?(sim|upgrade|service|plan)', 0.30),
-    # Train / travel bookings
-    (r'pnr\s*[\d\w]+', 0.45),
-    (r'(ticket|booking)\s*(is\s*)?(confirmed|booked|reserved)', 0.45),
+HAM_PATTERNS: List[Tuple[str, float]] = [
+    # Banking and wallet confirmations
+    (r"(rs\.?|inr|\u20b9)\s*[\d,]+\.?\d*.{0,35}(credited|debited|received|paid|sent|withdrawn)", 0.58),
+    (r"(credited|debited|received|paid|sent|withdrawn).{0,35}(rs\.?|inr|\u20b9)\s*[\d,]+", 0.50),
+    (r"(avl|available|current)\s*(bal|balance)", 0.45),
+    (r"upi\s*(ref|reference)", 0.35),
+    (r"(do\s*not|never)\s*(share|give).{0,25}(otp|pin|code|password)", 0.55),
+    (r"(otp|one[\s-]?time|verification\s*code).{0,60}(valid|expires|login|transaction|payment)", 0.45),
+    # Recharge, travel, delivery, bills
+    (r"recharge.{0,45}(successful|done|activated|renewed)", 0.55),
+    (r"(order|parcel|shipment|package).{0,55}(shipped|dispatched|delivered|out\s*for\s*delivery)", 0.50),
+    (r"(ticket|booking|pnr).{0,55}(confirmed|booked|reserved)", 0.50),
+    (r"(bill|premium|policy).{0,60}(due|generated|paid|receipt)", 0.35),
+    (r"visit.{0,20}(nearest|our).{0,20}(store|branch|centre|outlet)", 0.25),
+    # Hindi/Hinglish legitimate messages
+    ("\u0913\u091f\u0940\u092a\u0940|otp", 0.20),
+    ("\u0938\u093e\u091d\u093e|\u0936\u0947\u092f\u0930", 0.15),
+    ("(rs\\.?|inr|\u20b9)\\s*[\\d,]+.{0,35}(\u091c\u092e\u093e|\u0921\u0947\u092c\u093f\u091f|\u092d\u0941\u0917\u0924\u093e\u0928|\u092a\u094d\u0930\u093e\u092a\u094d\u0924)", 0.45),
+    ("\u092c\u093f\u0932.{0,45}(\u091c\u0947\u0928\u0930\u0947\u091f|\u0926\u0947\u092f|\u092d\u0941\u0917\u0924\u093e\u0928)", 0.35),
 ]
 
-# Known legit Indian brands — no-URL messages from these get a ham bonus
-_LEGIT_TELECOM    = {'airtel', 'jio', 'bsnl', 'vi', 'vodafone', 'idea'}
-_LEGIT_ECOMMERCE  = {'amazon', 'flipkart', 'swiggy', 'zomato', 'zepto', 'blinkit', 'meesho', 'myntra'}
-_LEGIT_GOVT       = {'irctc', 'uidai', 'epfo', 'ration'}
+URGENCY_TOKENS = {
+    "urgent", "immediately", "now", "today", "limited", "last", "final",
+    "turant", "jaldi", "abhi", "aaj", "kal", "antim",
+    "\u0924\u0941\u0930\u0902\u0924", "\u091c\u0932\u094d\u0926\u0940",
+    "\u0905\u092d\u0940", "\u0906\u091c", "\u0915\u0932",
+}
+
+PHONE_RE = re.compile(r"(?:\+91[-\s]?)?\d[\d\s\-]{8,}\d")
+DEADLINE_RE = re.compile(
+    r"aaj\s*raat|kal\s*subah|\d{1,2}:\d{2}\s*(am|pm|baje)|"
+    r"\d+\s*(ghante|minute|mint)\s*(mein|tak|ke\s*andar)|"
+    r"\u0906\u091c\s*\u0930\u093e\u0924|\u0915\u0932\s*\u0938\u0941\u092c\u0939|"
+    r"\u092c\u091c\u0947\s*\u0924\u0915|\d+\s*(\u0918\u0902\u091f\u0947|\u092e\u093f\u0928\u091f)\s*(\u092e\u0947\u0902|\u0924\u0915)",
+    re.IGNORECASE,
+)
 
 
-def _en_spam_score(message: str, has_url: bool) -> float:
-    """
-    Returns 0–1 English phishing confidence from rule patterns.
-    Only fires on explicit phishing signals; conservative by design.
-    """
-    msg = message.lower()
-    score = sum(s for p, s in _EN_SPAM_PATTERNS if re.search(p, msg))
-    if has_url:
-        score += 0.20  # any suspicious URL + phishing text is a strong combo
-        if re.search(r'https?://\S+(verify|login|update|confirm|secure|account)\S*', msg):
-            score += 0.15  # login/verify in URL path = extra signal
-    return min(score, 0.90)
+def _tokens(text: str) -> set:
+    return set(TOKEN_RE.findall(text.lower()))
 
 
-def _en_ham_score(message: str, has_url: bool) -> float:
-    """
-    Returns 0–1 legit-message confidence from transactional patterns.
-    Used to cap neural score downward when clear ham signals are present.
-    """
-    msg   = message.lower()
-    words = set(msg.split())
-    score = sum(s for p, s in _EN_HAM_PATTERNS if re.search(p, msg))
-    # Known legit brands without a suspicious URL → extra ham confidence
-    if not has_url:
-        if words & _LEGIT_TELECOM:
-            score += 0.20
-        if words & _LEGIT_ECOMMERCE:
-            score += 0.15
-        if words & _LEGIT_GOVT:
-            score += 0.15
-    return min(score, 0.95)
-
-
-def hinglish_rule_score(message: str) -> float:
-    """
-    Returns 0–1 spam score using pattern matching for Hinglish/Hindi
-    social engineering scams. Focuses on:
-    - Service disconnection threats (electricity, SIM, account)
-    - Authority impersonation (officer, police, court)
-    - Urgency + phone number combo
-    - Hard deadlines ("aaj raat 9:30 PM tak")
-    """
-    msg = message.lower()
-    words = set(msg.split())
+def _sum_patterns(text: str, patterns: Iterable[Tuple[str, float]]) -> float:
+    msg = text.lower()
     score = 0.0
+    for pattern, weight in patterns:
+        if re.search(pattern, msg, re.IGNORECASE):
+            score += weight
+    return min(score, 1.0)
 
-    # Threat pattern match — each hit adds significant weight
-    threat_hits = sum(1 for p in _THREAT_PATTERNS if re.search(p, msg))
-    score += min(threat_hits * 0.28, 0.55)
 
-    # Urgency + phone number together = classic social engineering combo
-    has_urgency = bool(words & _HINGLISH_URGENCY)
-    has_phone = bool(_PHONE_RE.search(message))
-    if has_urgency and has_phone:
-        score += 0.35
+def spam_rule_score(message: str, uf: Dict[str, int]) -> float:
+    """Explicit phishing/scam confidence from transparent rules."""
+    score = _sum_patterns(message, SPAM_PATTERNS)
+    tokens = _tokens(message)
 
-    # Authority impersonation
-    auth_hits = len(words & _AUTHORITY_WORDS)
-    score += min(auth_hits * 0.12, 0.22)
-
-    # Hard deadline ("aaj raat 9:30 PM tak")
-    if _DEADLINE_RE.search(message):
-        score += 0.20
-
-    # Suspicious URL + financial action = very strong signal
-    # e.g. "KYC kijiye: http://sbi-kyc.xyz" or "verify: http://bank-update.tk"
-    has_url = bool(re.search(r'https?://\S+', message))
-    kyc_or_verify = bool(re.search(r'kyc|verify|update|confirm', msg))
-    if has_url and kyc_or_verify:
+    if tokens & URGENCY_TOKENS and PHONE_RE.search(message):
         score += 0.25
+    if DEADLINE_RE.search(message):
+        score += 0.15
+    if uf.get("has_url"):
+        if uf.get("suspicious_tld") or uf.get("has_ip_url") or uf.get("has_shortened_url"):
+            score += 0.25
+        if re.search(r"https?://\S*(verify|login|update|confirm|secure|kyc|account)\S*", message, re.IGNORECASE):
+            score += 0.20
 
     return min(score, 1.0)
 
 
-# ── Predictor ─────────────────────────────────────────────────────────────────
+def ham_rule_score(message: str, uf: Dict[str, int]) -> float:
+    """Legitimate transactional confidence from transparent rules."""
+    score = _sum_patterns(message, HAM_PATTERNS)
+    tokens = _tokens(message)
+
+    if tokens & LEGIT_BRANDS:
+        score += 0.18
+    if uf.get("has_url") and uf.get("has_legit_domain"):
+        score += 0.20
+    if uf.get("has_url") and (uf.get("suspicious_tld") or uf.get("has_ip_url") or uf.get("has_shortened_url")):
+        score -= 0.35
+
+    return max(0.0, min(score, 1.0))
+
+
+def combine_scores(neural: float, spam_rule: float, ham_rule: float, has_url: bool, has_legit_domain: bool) -> float:
+    """
+    Combine neural and rule scores.
+
+    Rules never average down spam evidence. They only set floors/ceilings.
+    """
+    final = float(neural)
+
+    if spam_rule >= 0.35:
+        final = max(final, spam_rule)
+
+    clear_legit = ham_rule >= 0.35 and spam_rule < 0.55
+    if clear_legit:
+        if not has_url:
+            cap = 1.0 - ham_rule * 0.82
+        elif has_legit_domain:
+            cap = 1.0 - ham_rule * 0.58
+        else:
+            cap = 1.0 - ham_rule * 0.25
+        final = min(final, cap)
+
+    return max(0.0, min(1.0, final))
+
 
 class SmishingPredictor:
     def __init__(self, checkpoint_path: str = "best_model.pt"):
@@ -237,122 +209,113 @@ class SmishingPredictor:
         self.tokenizer = get_tokenizer()
 
         checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
-
-        # Must match training config: freeze_bert_layers=0, dropout=0.3
         self.model = SmishingDetector(
-            num_handcrafted=17, dropout=0.3, freeze_bert_layers=0
+            num_handcrafted=17,
+            dropout=0.3,
+            freeze_bert_layers=0,
         ).to(self.device)
-        self.model.load_state_dict(checkpoint['model_state'])
+        self.model.load_state_dict(checkpoint["model_state"])
         self.model.eval()
 
-        # Use threshold saved during training
-        self.threshold = checkpoint.get('threshold', 0.55)
+        self.threshold = float(checkpoint.get("threshold", 0.55))
+        self.feature_mins = np.array(checkpoint.get("feature_mins", [0.0] * 17), dtype=np.float32)
+        self.feature_ranges = np.array(checkpoint.get("feature_ranges", [1.0] * 17), dtype=np.float32)
+        self.feature_ranges = np.where(self.feature_ranges == 0, 1.0, self.feature_ranges)
 
-        if 'feature_mins' in checkpoint and 'feature_ranges' in checkpoint:
-            self.feature_mins = np.array(checkpoint['feature_mins'], dtype=np.float32)
-            self.feature_ranges = np.array(checkpoint['feature_ranges'], dtype=np.float32)
-        else:
-            self.feature_mins = np.zeros(17, dtype=np.float32)
-            self.feature_ranges = np.ones(17, dtype=np.float32)
-            print("Warning: no normalization stats in checkpoint.")
+        print(
+            "SmishingPredictor loaded | "
+            f"threshold={self.threshold} | "
+            f"val_f1={checkpoint.get('val_f1', 'N/A')} | "
+            f"epoch={checkpoint.get('epoch', 'N/A')}"
+        )
 
-        print(f"SmishingPredictor loaded | threshold={self.threshold} | "
-              f"val_f1={checkpoint.get('val_f1', 'N/A')} | "
-              f"epoch={checkpoint.get('epoch', 'N/A')}")
+    def _handcrafted_features(self, message: str) -> Tuple[Dict[str, int], Dict[str, float], torch.Tensor]:
+        uf = url_features(message)
+        tf = text_features(message)
+        merged = {**uf, **tf}
+        raw = np.array([merged[col] for col in get_feature_columns()], dtype=np.float32)
+        norm = (raw - self.feature_mins) / self.feature_ranges
+        norm = np.nan_to_num(norm, nan=0.0, posinf=3.0, neginf=-2.0)
+        norm = np.clip(norm, -2.0, 3.0)
+        tensor = torch.from_numpy(norm.reshape(1, -1)).to(self.device)
+        return uf, tf, tensor
 
-    def _neural_score(self, message: str) -> float:
-        """Raw XLM-RoBERTa probability."""
+    def _neural_score(self, message: str, hand_features: torch.Tensor) -> float:
         cleaned = clean_text(message)
         enc = self.tokenizer(
-            cleaned, max_length=MAX_LEN,
-            padding='max_length', truncation=True, return_tensors='pt'
+            cleaned,
+            max_length=MAX_LEN,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
         )
         enc = {k: v.to(self.device) for k, v in enc.items()}
 
-        uf = url_features(message)
-        tf = text_features(message)
-        cols = get_feature_columns()
-        raw = np.array([{**uf, **tf}[c] for c in cols], dtype=np.float32)
-        norm = (raw - self.feature_mins) / self.feature_ranges
-        hf = torch.from_numpy(norm.reshape(1, -1)).to(self.device)
-
         with torch.no_grad():
-            return self.model.predict_proba(enc['input_ids'], enc['attention_mask'], hf).item()
+            prob = self.model.predict_proba(enc["input_ids"], enc["attention_mask"], hand_features)
+        return float(prob.item())
+
+    def _safe_domain_override(self, message: str, label: str, final_prob: float, spam_rule: float) -> Tuple[str, str, float, bool]:
+        if label != "spam" or spam_rule >= 0.55:
+            risk = "high" if final_prob >= 0.75 else "medium" if final_prob >= self.threshold else "low"
+            return label, risk, final_prob, False
+
+        try:
+            from utils.safe_browsing import get_checker
+            import tldextract
+
+            checker = get_checker()
+            urls = extract_urls(message)
+            if not urls:
+                risk = "high" if final_prob >= 0.75 else "medium" if final_prob >= self.threshold else "low"
+                return label, risk, final_prob, False
+
+            all_whitelisted = True
+            for url in urls:
+                ext = tldextract.extract(url)
+                full_domain = f"{ext.domain}.{ext.suffix}".lower().strip(".")
+                if full_domain not in checker.fallback_legit_domains:
+                    all_whitelisted = False
+                    break
+
+            if all_whitelisted:
+                return "ham", "low", min(final_prob, 0.45), True
+        except Exception:
+            pass
+
+        risk = "high" if final_prob >= 0.75 else "medium" if final_prob >= self.threshold else "low"
+        return label, risk, final_prob, False
 
     def predict(self, message: str) -> dict:
         lang, lang_conf = detect_language(message)
-        uf = url_features(message)
-        tf = text_features(message)
+        uf, tf, hand_features = self._handcrafted_features(message)
 
-        neural_prob = self._neural_score(message)
-
-        # ── Language-aware ensemble ────────────────────────────────────────────
-        if lang in ('hinglish', 'hindi'):
-            rule_prob = hinglish_rule_score(message)
-            base_weight = 0.35 + 0.10 * lang_conf          # 0.35–0.45
-            if rule_prob >= 0.7:
-                rule_weight = 0.75   # fixed 75% — rules dominate when very confident
-            else:
-                rule_weight = base_weight
-            final_prob = (1 - rule_weight) * neural_prob + rule_weight * rule_prob
-        else:
-            # English: trust neural, but apply rule corrections for known blind spots
-            rule_prob  = 0.0
-            spam_s     = _en_spam_score(message, bool(uf.get('has_url')))
-            ham_s      = _en_ham_score(message, bool(uf.get('has_url')))
-            final_prob = neural_prob
-
-            # Spam floor — when rules detect clear phishing, set a minimum probability
-            if spam_s >= 0.45:
-                final_prob = max(final_prob, spam_s * 0.88)
-
-            # Ham ceiling — when rules detect a legit transaction, cap probability
-            if ham_s >= 0.30:
-                # Stronger ceiling when there's no URL (can't be a phishing link)
-                url_factor = 0.88 if not uf.get('has_url') else 0.45
-                final_prob = min(final_prob, 1.0 - ham_s * url_factor)
-
-            final_prob = max(0.0, min(1.0, final_prob))
+        neural_prob = self._neural_score(message, hand_features)
+        spam_s = spam_rule_score(message, uf)
+        ham_s = ham_rule_score(message, uf)
+        final_prob = combine_scores(
+            neural_prob,
+            spam_s,
+            ham_s,
+            bool(uf.get("has_url")),
+            bool(uf.get("has_legit_domain")),
+        )
 
         label = "spam" if final_prob >= self.threshold else "ham"
-        risk  = "high" if final_prob >= 0.75 else "medium" if final_prob >= self.threshold else "low"
-
-        # ── Google Safe Browsing override ─────────────────────────────────────
-        # IMPORTANT: Only downgrade to ham if the domain is in a KNOWN-SAFE
-        # whitelist. Do NOT trust "GSB returned no threats" as proof of safety —
-        # new phishing domains won't be in GSB's database yet.
-        gsb_cleared = False
-        if uf['has_url'] and uf['num_urls'] > 0 and label == 'spam':
-            try:
-                from utils.safe_browsing import get_checker
-                from utils.data_loader import extract_urls
-                import tldextract
-                checker = get_checker()
-                urls = extract_urls(message)
-                if urls:
-                    all_whitelisted = all(
-                        f"{tldextract.extract(u).domain}.{tldextract.extract(u).suffix}"
-                        in checker.fallback_legit_domains
-                        for u in urls
-                    )
-                    if all_whitelisted:
-                        label      = "ham"
-                        risk       = "low"
-                        final_prob = min(final_prob, 0.45)
-                        gsb_cleared = True
-            except Exception:
-                pass
+        risk = "high" if final_prob >= 0.75 else "medium" if final_prob >= self.threshold else "low"
+        label, risk, final_prob, gsb_cleared = self._safe_domain_override(message, label, final_prob, spam_s)
 
         return {
-            "label":        label,
-            "confidence":   round(final_prob, 4),
-            "risk_level":   risk,
-            "language":     lang,
-            "gsb_cleared":  gsb_cleared,
-            "url_signals":  uf,
+            "label": label,
+            "confidence": round(final_prob, 4),
+            "risk_level": risk,
+            "language": lang,
+            "language_confidence": round(lang_conf, 2),
+            "gsb_cleared": gsb_cleared,
+            "url_signals": uf,
             "text_signals": tf,
-            # Breakdown — useful for debugging / UI display
             "_neural_score": round(neural_prob, 4),
-            "_rule_score":   round(rule_prob, 4),
-            "_rule_weight":  round(0.35 + 0.10 * lang_conf if lang != 'english' else 0.0, 2),
+            "_rule_score": round(spam_s, 4),
+            "_ham_rule_score": round(ham_s, 4),
+            "_threshold": self.threshold,
         }

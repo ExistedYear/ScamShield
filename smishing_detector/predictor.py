@@ -54,22 +54,29 @@ _THREAT_PATTERNS = [
     r'band\s*ho\s*(jayega|jaega|jaayega)',
     r'cut\s*kar\s*(diya|denge|diya\s*jayega)',
     r'electric\w*\s*(cut|band|disconnect)',
-    # Legal / government threats
+    # Legal / government threats (expanded)
     r'giraftari|graftari',
     r'court\s*noti(ce|s)',
     r'fir\s*(darj|darz|file)',
     r'cyber\s*crime',
     r'income\s*tax',
-    r'aadhaar\s*(block|band|suspend)',
+    r'aadhaar\s*(card\s*)?(block|band|suspend|deactivat)',  # fixed: allows "Aadhaar card block"
     r'sim\s*(block|band|deactivat)',
-    # Banking / financial fraud
+    r'digital\s*arrest',                           # NEW: "digital arrest" scam
+    r'money\s*launderin',                          # NEW: money laundering threat
+    r'warrant\s*(jari|issue|nikl)',                # NEW: warrant issued
+    r'case\s*(darj|darz|file|register)',           # NEW: "case darj hua" pattern
+    r'(cbi|ed|police)\s*(notice|action|raid)',     # NEW: authority action
+    # Banking / financial fraud (expanded)
     r'account\s*(block|band|freez|suspend)',
     r'khata\s*(band|suspend|block|freez)',
     r'kyc\s*(update|kijiye|verify|complete)',
     r'pension\s*(rok|band|cancel)',
     r'bank.*suspend|suspend.*bank',
     r'upi\s*(block|band|suspend)',
+    r'upi\s*(id\s*)?(expir|expire|deactivat)',     # NEW: "UPI expire" scam
     r'debit\s*card\s*(block|band|suspend)',
+    r'pan\s*(card\s*)?(block|deactivat|suspend)',  # NEW: PAN card deactivation
 ]
 
 _AUTHORITY_WORDS = {
@@ -87,9 +94,98 @@ _HINGLISH_URGENCY = {
 
 _PHONE_RE = re.compile(r'(?:\+91[-\s]?)?\d[\d\s\-]{8,}\d')
 _DEADLINE_RE = re.compile(
-    r'aaj\s*raat|kal\s*subah|pm\s*tak|am\s*tak|\d{1,2}:\d{2}\s*(am|pm|baje)',
+    r'aaj\s*raat|kal\s*subah|pm\s*tak|am\s*tak|\d{1,2}:\d{2}\s*(am|pm|baje)'
+    r'|\d+\s*(ghante|minute|mint)\s*(mein|tak|ke\s*andar)',  # NEW: "2 ghante mein"
     re.IGNORECASE
 )
+
+
+# ── English rule-based layers ─────────────────────────────────────────────────
+# These correct the neural model's blind spots on English messages.
+# Spam floor: when rules detect clear phishing, ensure a minimum probability.
+# Ham ceiling: when rules detect clear legit transactions, cap probability.
+
+_EN_SPAM_PATTERNS = [
+    # Account/service suspension phishing
+    (r'account.{0,12}(suspend|block|freez|terminat|clos)', 0.40),
+    (r'(suspend|cancel|terminat)\s*(your\s*)?(subscription|netflix|amazon\s*prime|membership)', 0.40),
+    # Financial / tax phishing
+    (r'(tax|hmrc|irs|income\s*tax)\s*(refund|rebate|return)', 0.45),
+    (r'customs?\s*(fee|charge|duty|clearance|payment)', 0.35),
+    # Delivery fee scams
+    (r'(parcel|package|shipment|delivery)\s*(fail|unable|could\s*not|attempt\s*fail|held)', 0.35),
+    # Payment / credential update
+    (r'(update|verify|confirm)\s*(your\s*)?(payment|billing|card\s*detail|account\s*detail)', 0.35),
+    (r'click\s*here\s*to\s*(verify|update|claim|reactivate|activate)', 0.25),
+    (r'(claim|collect)\s*(before|within|it\s*expires|now\s*at\s*http)', 0.25),
+    # Prize / lottery scams
+    (r'(win|won|winner|selected|chosen)\s*.{0,40}(prize|reward|gift\s*card|\$[\d,]+|lottery)', 0.35),
+    (r'lucky\s*(draw|winner|number)', 0.35),
+    # Loan scams
+    (r'loan\s*(approv|offer|eligible|sanction).{0,60}(contact|call|whatsapp|apply)', 0.35),
+    # ID / document deactivation (PAN, Aadhaar, SIM)
+    (r'pan\s*card.{0,20}(block|deactivat|suspend|reactivat|cancel)', 0.40),
+    (r'(deactivat|block).{0,40}(reactivat|verify|update).{0,20}http', 0.35),
+]
+
+_EN_HAM_PATTERNS = [
+    # Shipping / delivery confirmations (legit e-commerce)
+    (r'(order|shipment|package).{0,40}(shipped|dispatched|delivered|out\s*for\s*delivery)', 0.55),
+    (r'(estimated|expected)\s*(delivery|arrival)', 0.30),
+    (r'track\s*(your\s*)?(order|shipment|package)\s*(at|here)', 0.30),
+    # OTP / banking transactions
+    (r'(otp|one[\s-]?time\s*(pass\w*|pin))\s*(for|is)\s*[\w\s]{1,60}(login|transaction|transfer|payment)', 0.55),
+    (r'do\s*not\s*(share|give)\s*(this|your|the)\s*(otp|pin|code|password)', 0.60),
+    # Credit / debit confirmations (legit bank SMS)
+    (r'(rs\.?|₹|inr)\s*[\d,]+\.?\d*\s*(credited|debited|received|paid)', 0.50),
+    (r'(avl|available|current)\s*(bal|balance)\s*[:\-]?\s*(rs|₹|inr)', 0.45),
+    # Recharge / telecom
+    (r'recharge\s*of\s*(rs\.?|₹)\s*[\d,]+\s*(is\s*)?(successful|done|activated)', 0.55),
+    (r'(sim|5g|4g|network|plan)\s*(upgrade|migrat|activat)', 0.35),
+    (r'visit\s*(your\s*)?(nearest|our)\s*(store|centre|outlet|branch)', 0.35),
+    (r'eligible\s*for\s*(a\s*)?(free\s*)?(sim|upgrade|service|plan)', 0.30),
+    # Train / travel bookings
+    (r'pnr\s*[\d\w]+', 0.45),
+    (r'(ticket|booking)\s*(is\s*)?(confirmed|booked|reserved)', 0.45),
+]
+
+# Known legit Indian brands — no-URL messages from these get a ham bonus
+_LEGIT_TELECOM    = {'airtel', 'jio', 'bsnl', 'vi', 'vodafone', 'idea'}
+_LEGIT_ECOMMERCE  = {'amazon', 'flipkart', 'swiggy', 'zomato', 'zepto', 'blinkit', 'meesho', 'myntra'}
+_LEGIT_GOVT       = {'irctc', 'uidai', 'epfo', 'ration'}
+
+
+def _en_spam_score(message: str, has_url: bool) -> float:
+    """
+    Returns 0–1 English phishing confidence from rule patterns.
+    Only fires on explicit phishing signals; conservative by design.
+    """
+    msg = message.lower()
+    score = sum(s for p, s in _EN_SPAM_PATTERNS if re.search(p, msg))
+    if has_url:
+        score += 0.20  # any suspicious URL + phishing text is a strong combo
+        if re.search(r'https?://\S+(verify|login|update|confirm|secure|account)\S*', msg):
+            score += 0.15  # login/verify in URL path = extra signal
+    return min(score, 0.90)
+
+
+def _en_ham_score(message: str, has_url: bool) -> float:
+    """
+    Returns 0–1 legit-message confidence from transactional patterns.
+    Used to cap neural score downward when clear ham signals are present.
+    """
+    msg   = message.lower()
+    words = set(msg.split())
+    score = sum(s for p, s in _EN_HAM_PATTERNS if re.search(p, msg))
+    # Known legit brands without a suspicious URL → extra ham confidence
+    if not has_url:
+        if words & _LEGIT_TELECOM:
+            score += 0.20
+        if words & _LEGIT_ECOMMERCE:
+            score += 0.15
+        if words & _LEGIT_GOVT:
+            score += 0.15
+    return min(score, 0.95)
 
 
 def hinglish_rule_score(message: str) -> float:
@@ -193,17 +289,30 @@ class SmishingPredictor:
         # ── Language-aware ensemble ────────────────────────────────────────────
         if lang in ('hinglish', 'hindi'):
             rule_prob = hinglish_rule_score(message)
-            # Dynamic rule weight: higher weight when rule is very confident
-            # (compensates for sparse Hinglish training data)
             base_weight = 0.35 + 0.10 * lang_conf          # 0.35–0.45
             if rule_prob >= 0.7:
-                rule_weight = min(base_weight + 0.25, 0.70) # boost to 0.60–0.70
+                rule_weight = 0.75   # fixed 75% — rules dominate when very confident
             else:
                 rule_weight = base_weight
             final_prob = (1 - rule_weight) * neural_prob + rule_weight * rule_prob
         else:
-            rule_prob = 0.0
+            # English: trust neural, but apply rule corrections for known blind spots
+            rule_prob  = 0.0
+            spam_s     = _en_spam_score(message, bool(uf.get('has_url')))
+            ham_s      = _en_ham_score(message, bool(uf.get('has_url')))
             final_prob = neural_prob
+
+            # Spam floor — when rules detect clear phishing, set a minimum probability
+            if spam_s >= 0.45:
+                final_prob = max(final_prob, spam_s * 0.88)
+
+            # Ham ceiling — when rules detect a legit transaction, cap probability
+            if ham_s >= 0.30:
+                # Stronger ceiling when there's no URL (can't be a phishing link)
+                url_factor = 0.88 if not uf.get('has_url') else 0.45
+                final_prob = min(final_prob, 1.0 - ham_s * url_factor)
+
+            final_prob = max(0.0, min(1.0, final_prob))
 
         label = "spam" if final_prob >= self.threshold else "ham"
         risk  = "high" if final_prob >= 0.75 else "medium" if final_prob >= self.threshold else "low"

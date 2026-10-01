@@ -43,7 +43,7 @@ export default function HomeScreen({ navigation }) {
     history.forEach((h) => { if (h.messageId) map[h.messageId] = h; });
     setScanResults(map);
     const total   = history.length;
-    const threats = history.filter((h) => h.risk_level === 'high' || h.risk_level === 'medium').length;
+    const threats = history.filter((h) => h.label === 'spam' && (h.risk_level === 'high' || h.risk_level === 'medium')).length;
     setStats({ total, threats, safe: total - threats });
   }, []);
 
@@ -96,8 +96,8 @@ export default function HomeScreen({ navigation }) {
       setScanResults((prev) => ({ ...prev, [message.id]: scanData }));
       setStats((prev) => ({
         total:   prev.total + 1,
-        threats: result.risk_level !== 'low' ? prev.threats + 1 : prev.threats,
-        safe:    result.risk_level === 'low'  ? prev.safe    + 1 : prev.safe,
+        threats: result.label === 'spam' && result.risk_level !== 'low' ? prev.threats + 1 : prev.threats,
+        safe:    result.label !== 'spam' || result.risk_level === 'low' ? prev.safe    + 1 : prev.safe,
       }));
     } catch (err) {
       const fallback = {

@@ -73,10 +73,11 @@ SPAM_PATTERNS: List[Tuple[str, float]] = [
     (r"kyc.{0,20}(update|verify|complete|pending|expire)", 0.38),
     (r"(verify|update|confirm).{0,30}(account|payment|billing|card|kyc|details)", 0.35),
     # Delivery, fees, refunds, and prizes
-    (r"(parcel|package|shipment|delivery).{0,35}(fail|held|unable|fee|customs|returned)", 0.35),
-    (r"(tax|hmrc|irs|income\s*tax).{0,30}(refund|rebate|return|pending)", 0.40),
+    (r"(parcel|package|shipment|delivery).{0,35}(fail|held|unable|fee|customs|returned)", 0.42),
+    (r"customs?\s*(fee|charge|duty|clearance|payment)", 0.40),
+    (r"(tax|hmrc|irs|income\s*tax).{0,30}(refund|rebate|return|pending|claim)", 0.42),
+    (r"(claim|collect|redeem).{0,30}(before|within|it\s*expires|now\s*at\s*http|at\s*http)", 0.38),
     (r"(win|won|winner|selected|chosen|lucky).{0,45}(prize|reward|gift|lottery|cash|rs\.?|inr)", 0.45),
-    (r"(claim|collect|redeem).{0,30}(now|before|within|expires|prize|reward)", 0.35),
     (r"loan.{0,35}(approved|eligible|sanction|offer).{0,40}(call|contact|whatsapp|apply)", 0.38),
     # Hinglish social engineering
     (r"bijli.{0,25}(cut|band|kataegi|kategi|nahi\s*aayegi)", 0.45),
@@ -106,9 +107,13 @@ HAM_PATTERNS: List[Tuple[str, float]] = [
     # Recharge, travel, delivery, bills
     (r"recharge.{0,45}(successful|done|activated|renewed)", 0.55),
     (r"(order|parcel|shipment|package).{0,55}(shipped|dispatched|delivered|out\s*for\s*delivery)", 0.50),
+    (r"(estimated|expected)\s*(delivery|arrival)", 0.30),
     (r"(ticket|booking|pnr).{0,55}(confirmed|booked|reserved)", 0.50),
     (r"(bill|premium|policy).{0,60}(due|generated|paid|receipt)", 0.35),
-    (r"visit.{0,20}(nearest|our).{0,20}(store|branch|centre|outlet)", 0.25),
+    # Telecom — legit promos, upgrades, store visits
+    (r"visit.{0,20}(nearest|our).{0,20}(store|branch|centre|outlet)", 0.35),
+    (r"eligible\s*(for)?\s*(a\s*)?(free\s*)?(sim|upgrade|service|plan|offer)", 0.30),
+    (r"(sim|5g|4g|network|plan)\s*(upgrade|migrat|activat)", 0.30),
     # Hindi/Hinglish legitimate messages
     ("\u0913\u091f\u0940\u092a\u0940|otp", 0.20),
     ("\u0938\u093e\u091d\u093e|\u0936\u0947\u092f\u0930", 0.15),
@@ -156,6 +161,7 @@ def spam_rule_score(message: str, uf: Dict[str, int]) -> float:
     if DEADLINE_RE.search(message):
         score += 0.15
     if uf.get("has_url"):
+        score += 0.15  # any URL + spam pattern match is a signal
         if uf.get("suspicious_tld") or uf.get("has_ip_url") or uf.get("has_shortened_url"):
             score += 0.25
         if re.search(r"https?://\S*(verify|login|update|confirm|secure|kyc|account)\S*", message, re.IGNORECASE):
@@ -255,36 +261,86 @@ class SmishingPredictor:
             prob = self.model.predict_proba(enc["input_ids"], enc["attention_mask"], hand_features)
         return float(prob.item())
 
-    def _safe_domain_override(self, message: str, label: str, final_prob: float, spam_rule: float) -> Tuple[str, str, float, bool]:
-        if label != "spam" or spam_rule >= 0.55:
-            risk = "high" if final_prob >= 0.75 else "medium" if final_prob >= self.threshold else "low"
-            return label, risk, final_prob, False
+    def _green_channel(self, message: str, label: str, final_prob: float,
+                        spam_rule: float, ham_rule: float,
+                        uf: dict) -> Tuple[str, str, float, bool, str]:
+        """
+        Green Channel — distinguishes SCAMS from harmless promotional spam.
 
+        This project detects smishing (scam SMS), NOT general spam.
+        A message like "Congratulations! Free 5G SIM upgrade. Visit your nearest
+        Airtel store" is promotional spam, not a scam — it has no phishing URL,
+        no threats, no urgency to click a link.
+
+        Logic:
+        1. Hard scam signals (spam_rule >= 0.55) → NEVER clear. These have
+           explicit phishing patterns like "account suspended", "KYC update",
+           "digital arrest" with suspicious URLs.
+        2. Soft spam (spam_rule < 0.55) + ALL URLs are verified legit domains
+           → GREEN CHANNEL → downgrade to "safe" (it's just an ad/promo).
+        3. Soft spam + NO URLs at all + ham patterns detected → also GREEN
+           CHANNEL (legit transactional or brand notification).
+
+        Returns: (label, risk, final_prob, green_cleared, green_reason)
+        """
+        # Never green-channel if hard scam patterns are present
+        if spam_rule >= 0.55:
+            risk = "high" if final_prob >= 0.75 else "medium" if final_prob >= self.threshold else "low"
+            return label, risk, final_prob, False, ""
+
+        # Only applies to messages that would otherwise be classified as spam
+        if label != "spam":
+            risk = "low"
+            return label, risk, final_prob, False, ""
+
+        # Build unified legit domain set (safe_browsing + data_loader)
+        legit_domains = set()
         try:
             from utils.safe_browsing import get_checker
-            import tldextract
-
-            checker = get_checker()
-            urls = extract_urls(message)
-            if not urls:
-                risk = "high" if final_prob >= 0.75 else "medium" if final_prob >= self.threshold else "low"
-                return label, risk, final_prob, False
-
-            all_whitelisted = True
-            for url in urls:
-                ext = tldextract.extract(url)
-                full_domain = f"{ext.domain}.{ext.suffix}".lower().strip(".")
-                if full_domain not in checker.fallback_legit_domains:
-                    all_whitelisted = False
-                    break
-
-            if all_whitelisted:
-                return "ham", "low", min(final_prob, 0.45), True
+            legit_domains |= get_checker().fallback_legit_domains
+        except Exception:
+            pass
+        try:
+            from utils.data_loader import LEGIT_DOMAINS
+            legit_domains |= LEGIT_DOMAINS
         except Exception:
             pass
 
+        has_url = bool(uf.get("has_url"))
+        has_suspicious = bool(uf.get("suspicious_tld") or uf.get("has_ip_url"))
+
+        # Case 1: Message has URLs — check if ALL are legit
+        if has_url and not has_suspicious:
+            try:
+                import tldextract
+                urls = extract_urls(message)
+                if urls:
+                    all_legit = True
+                    for url in urls:
+                        ext = tldextract.extract(url)
+                        full_domain = f"{ext.domain}.{ext.suffix}".lower().strip(".")
+                        if full_domain not in legit_domains:
+                            all_legit = False
+                            break
+                    if all_legit:
+                        return "safe", "low", min(final_prob, 0.40), True, \
+                            "all URLs verified as legitimate domains"
+            except Exception:
+                pass
+
+        # Case 2: No URL + ham patterns present + low spam rule score
+        # e.g. "Airtel: Congratulations! Eligible for free 5G upgrade. Visit store."
+        if not has_url and ham_rule >= 0.35 and spam_rule < 0.35:
+            return "safe", "low", min(final_prob, 0.35), True, \
+                "no URLs + legitimate transactional patterns detected"
+
+        # Case 3: Has legit domain URL + ham patterns dominate spam patterns
+        if has_url and uf.get("has_legit_domain") and ham_rule > spam_rule:
+            return "safe", "low", min(final_prob, 0.42), True, \
+                "legit domain URL + stronger ham signals than scam signals"
+
         risk = "high" if final_prob >= 0.75 else "medium" if final_prob >= self.threshold else "low"
-        return label, risk, final_prob, False
+        return label, risk, final_prob, False, ""
 
     def predict(self, message: str) -> dict:
         lang, lang_conf = detect_language(message)
@@ -303,7 +359,11 @@ class SmishingPredictor:
 
         label = "spam" if final_prob >= self.threshold else "ham"
         risk = "high" if final_prob >= 0.75 else "medium" if final_prob >= self.threshold else "low"
-        label, risk, final_prob, gsb_cleared = self._safe_domain_override(message, label, final_prob, spam_s)
+
+        # Green channel: distinguish scams from harmless promo spam
+        label, risk, final_prob, green_cleared, green_reason = self._green_channel(
+            message, label, final_prob, spam_s, ham_s, uf
+        )
 
         return {
             "label": label,
@@ -311,7 +371,8 @@ class SmishingPredictor:
             "risk_level": risk,
             "language": lang,
             "language_confidence": round(lang_conf, 2),
-            "gsb_cleared": gsb_cleared,
+            "green_channel": green_cleared,
+            "green_reason": green_reason,
             "url_signals": uf,
             "text_signals": tf,
             "_neural_score": round(neural_prob, 4),
@@ -319,3 +380,4 @@ class SmishingPredictor:
             "_ham_rule_score": round(ham_s, 4),
             "_threshold": self.threshold,
         }
+

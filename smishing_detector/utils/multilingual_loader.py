@@ -82,8 +82,9 @@ def load_hindi_test_data() -> pd.DataFrame:
             print("  Warning: Could not find Hindi column")
             return pd.DataFrame(columns=['message', 'label', 'language'])
 
-        # Get label column — could be 'v1', 'label', or 'labels'
-        label_col = next((c for c in ['v1', 'label', 'labels'] if c in df.columns), None)
+        # Get label column — could be 'v1', 'label', or 'labels' (case-insensitive)
+        col_lower_map = {c.lower().strip(): c for c in df.columns}
+        label_col = next((col_lower_map[c] for c in ['v1', 'label', 'labels'] if c in col_lower_map), None)
         if label_col is None:
             print(f"  Warning: No label column found. Got: {df.columns.tolist()}")
             return pd.DataFrame(columns=['message', 'label', 'language'])

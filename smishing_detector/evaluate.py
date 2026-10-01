@@ -59,7 +59,7 @@ def main():
     print("\n" + "="*60)
     print("COMPARISON VS PAPER BASELINE")
     print("="*60)
-    print(f"{'Metric':<25} {'Paper (CNN-LSTM)':<20} {'Ours (DistilBERT)':<20}")
+    print(f"{'Metric':<25} {'Paper (CNN-LSTM)':<20} {'Ours (XLM-RoBERTa)':<20}")
     print("-"*65)
     print(f"{'Accuracy':<25} {'97.49%':<20} {f'{test_acc*100:.2f}%':<20}")
     print(f"{'F1 (spam)':<25} {'0.97':<20} {f'{test_f1:.2f}':<20}")

@@ -66,7 +66,7 @@ def health():
     if predictor is None:
         return jsonify({
             "status": "error",
-            "model": "SmishingDetector (DistilBERT + URL features)",
+            "model": "SmishingDetector (XLM-RoBERTa + URL features)",
             "error": "Model checkpoint not found. Run train.py first."
         }), 503
 

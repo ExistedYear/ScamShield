@@ -90,7 +90,7 @@ export default function ScanScreen() {
               <RiskBadge riskLevel={riskLevel} size="large" />
               <View style={{ flex: 1 }}>
                 <Text style={[s.verdictH, { color: colors.text }]}>
-                  {result.label === 'spam' ? 'Threat Detected' : 'Appears Legitimate'}
+                  {result.label === 'spam' ? 'Threat Detected' : result.label === 'safe' ? 'Verified Safe' : 'Appears Legitimate'}
                 </Text>
                 <View style={s.riskRow}>
                   <View style={[s.rDot, { backgroundColor: risk.color }]} />

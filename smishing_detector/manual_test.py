@@ -63,6 +63,17 @@ TEST_CASES = [
     ("EDGE", None, "Free Recharge! Get Rs.1000 talktime free. Limited offer. Reply YES to claim."),
     ("EDGE", None, "Dear Sir, your loan of Rs.5,00,000 at 8.5% p.a. is approved. Contact us to proceed."),
     ("EDGE", None, "Your SBI account is safe. No action needed. This is a test message from SBI fraud team."),
+
+    # ── GREEN CHANNEL tests: promo/ad spam with legit URLs should NOT be "spam" ─
+    # These are ads/promos (spammy language) but NOT scams
+    ("GREEN", "safe", "Congratulations! You're eligible for a special cashback offer on Amazon. Shop now at amazon.in/offers"),
+    ("GREEN", "safe", "Flipkart Big Billion Sale! Exclusive deals for you. Up to 80% off! Visit flipkart.com/sale"),
+    ("GREEN", "safe", "WINNER! You've been selected for a special Netflix upgrade. Enjoy 3 months free at netflix.com/upgrade"),
+
+    # These ARE scams — green channel must NOT clear them
+    ("GN-SCAM", "spam", "WINNER! You've been selected for Rs.5,00,000 prize. Claim at http://prize-winner.xyz/claim"),
+    ("GN-SCAM", "spam", "Your Netflix account will be suspended. Update payment details: http://netflix-billing.info/update"),
+    ("GN-SCAM", "spam", "Amazon: Your account is locked. Verify immediately at http://amaz0n-verify.top/login"),
 ]
 
 
@@ -87,8 +98,12 @@ def run_tests():
         if expected is None:
             status = "EDGE"
         else:
-            correct = got_label == expected
-            status  = "✓" if correct else "✗ WRONG"
+            # 'safe' (green channel) counts as correct when expected is 'ham' or 'safe'
+            if expected in ("ham", "safe"):
+                correct = got_label in ("ham", "safe")
+            else:
+                correct = got_label == expected
+            status  = "\u2713" if correct else "\u2717 WRONG"
             cat_key = category.split("-")[0]
             stats["total"] += 1
             stats["correct"] += correct
@@ -98,9 +113,11 @@ def run_tests():
 
         exp_str = (expected or "?").upper()[:4]
         got_str = got_label.upper()[:4]
-        print(f"{category:<10} {exp_str:<5} {got_str:<5} {conf:>6.1%}  {risk:<8} {lang:<9} {status}")
-        if status == "✗ WRONG":
-            print(f"           ↳ {text[:90]}{'...' if len(text)>90 else ''}")
+        gc = result.get("green_channel", False)
+        gc_tag = " [GC]" if gc else ""
+        print(f"{category:<10} {exp_str:<5} {got_str:<5} {conf:>6.1%}  {risk:<8} {lang:<9} {status}{gc_tag}")
+        if status == "\u2717 WRONG":
+            print(f"           \u21b3 {text[:90]}{'...' if len(text)>90 else ''}")
 
     print("─" * len(header))
     acc = stats["correct"] / stats["total"] * 100 if stats["total"] else 0

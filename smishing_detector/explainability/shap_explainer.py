@@ -6,7 +6,7 @@ from matplotlib import colors as mcolors
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from predictor import SmishingPredictor
 from utils.data_loader import url_features, text_features, clean_text, get_feature_columns

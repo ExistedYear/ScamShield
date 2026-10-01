@@ -125,7 +125,7 @@ export async function scanNewMessages({ notify = true } = {}) {
     const scanData = { messageId: msg.id, address: msg.address, body: msg.body, ...result };
     await addScanResult(scanData);
 
-    const risky = result.risk_level === 'high' || result.risk_level === 'medium';
+    const risky = result.label === 'spam' && (result.risk_level === 'high' || result.risk_level === 'medium');
     if (risky) {
       threats += 1;
       if (notify && settings.notifications !== false) {

@@ -59,7 +59,7 @@ export default function DetailScreen({ route }) {
           <RiskBadge riskLevel={riskLevel} size="large" />
           <View style={{ flex: 1 }}>
             <Text style={[s.verdictH, { color: colors.text }]}>
-              {result?.label === 'spam' ? 'Threat Detected' : 'Appears Legitimate'}
+              {result?.label === 'spam' ? 'Threat Detected' : result?.label === 'safe' ? 'Verified Safe' : 'Appears Legitimate'}
             </Text>
             <View style={s.riskRow}>
               <View style={[s.rDot, { backgroundColor: risk.color }]} />
@@ -71,14 +71,14 @@ export default function DetailScreen({ route }) {
         </View>
       </View>
 
-      {/* GSB Cleared Badge */}
-      {result?.gsb_cleared && (
+      {/* Green Channel Badge */}
+      {result?.green_channel && (
         <View style={[s.gsbBadge, { backgroundColor: colors.greenSoft, borderColor: colors.greenBorder }]}>
-          <Feather name="shield" size={15} color={colors.green} />
+          <Feather name="check-circle" size={15} color={colors.green} />
           <View style={{ flex: 1 }}>
-            <Text style={[s.gsbTitle, { color: colors.green }]}>Verified Safe by Google</Text>
+            <Text style={[s.gsbTitle, { color: colors.green }]}>Green Channel Cleared</Text>
             <Text style={[s.gsbSub, { color: colors.text2 }]}>
-              All URLs in this message were checked against Google Safe Browsing and found clean.
+              {result.green_reason || 'This message contains promotional content from verified sources — not a scam.'}
             </Text>
           </View>
         </View>

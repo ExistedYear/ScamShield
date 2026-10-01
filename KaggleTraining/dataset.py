@@ -4,19 +4,6 @@ import pandas as pd
 from torch.utils.data import Dataset, DataLoader
 
 
-URL_FEATURE_COLS = [
-    'has_url', 'num_urls', 'has_http', 'has_https', 'suspicious_tld',
-    'max_url_len', 'has_ip_url', 'has_shortened_url', 'has_legit_domain'
-]
-
-TEXT_FEATURE_COLS = [
-    'num_chars', 'num_words', 'pct_upper', 'pct_digits', 'num_special',
-    'urgency_count', 'has_phone', 'has_currency'
-]
-
-FEATURE_COLS = URL_FEATURE_COLS + TEXT_FEATURE_COLS  # 17 total
-
-
 class SMSDataset(Dataset):
     def __init__(self, df: pd.DataFrame, tokenizer,
                  max_len: int = 128, feature_mins=None, feature_ranges=None):
@@ -25,7 +12,15 @@ class SMSDataset(Dataset):
         self.tokenizer = tokenizer
         self.max_len = max_len
 
-        self.features = df[FEATURE_COLS].values.astype(np.float32)
+        from data_loader import get_feature_columns
+
+        feature_cols = get_feature_columns()
+        missing = [col for col in feature_cols if col not in df.columns]
+        if missing:
+            raise ValueError(f"Missing feature columns: {missing}")
+
+        self.features = df[feature_cols].values.astype(np.float32)
+        self.features = np.nan_to_num(self.features, nan=0.0, posinf=0.0, neginf=0.0)
 
         # Normalise: use training-set stats if provided, else compute from self
         if feature_mins is not None and feature_ranges is not None:
@@ -37,6 +32,8 @@ class SMSDataset(Dataset):
             self.feature_ranges = np.where(ranges == 0, 1.0, ranges)
 
         self.features = (self.features - self.feature_mins) / self.feature_ranges
+        self.features = np.nan_to_num(self.features, nan=0.0, posinf=3.0, neginf=-2.0)
+        self.features = np.clip(self.features, -2.0, 3.0).astype(np.float32)
 
     def __len__(self):
         return len(self.texts)

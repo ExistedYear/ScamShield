@@ -121,16 +121,20 @@ export async function scanNewMessages({ notify = true } = {}) {
 
   let threats = 0;
   for (const msg of newMsgs) {
-    const result = await predictSecure(msg.body);
-    const scanData = { messageId: msg.id, address: msg.address, body: msg.body, ...result };
-    await addScanResult(scanData);
+    try {
+      const result = await predictSecure(msg.body);
+      const scanData = { messageId: msg.id, address: msg.address, body: msg.body, ...result };
+      await addScanResult(scanData);
 
-    const risky = result.label === 'spam' && (result.risk_level === 'high' || result.risk_level === 'medium');
-    if (risky) {
-      threats += 1;
-      if (notify && settings.notifications !== false) {
-        await sendThreatNotification(msg.address, msg.body, result.confidence);
+      const risky = result.label === 'spam' && (result.risk_level === 'high' || result.risk_level === 'medium');
+      if (risky) {
+        threats += 1;
+        if (notify && settings.notifications !== false) {
+          await sendThreatNotification(msg.address, msg.body, result.confidence);
+        }
       }
+    } catch (_) {
+      // skip this message, continue with next
     }
   }
 
@@ -207,9 +211,26 @@ export function getDemoMessages() {
 
 export function simulateIncomingSms() {
   const scams = [
-    { address: '+91-70001-22222', body: 'Income Tax Department notice: Aapke naam pe FIR darj hogi. Kal subah 10 AM tak sampark karein: 9911000000' },
-    { address: '+91-80002-33333', body: 'Your PAN card has been deactivated. Reactivate at http://pan-reactivate.online/verify with your Aadhaar and OTP.' },
-    { address: 'AD-CBIBK', body: 'Dear Customer, aapka SBI bank khata suspend ho gaya hai. Abhi KYC update kijiye: http://sbi-kyc-update.xyz/verify' },
+    // ── English (5) ──────────────────────────────────────────────────────────
+    { address: '+91-70001-11111', body: 'URGENT: Your SBI account has been suspended due to KYC failure. Verify immediately at http://sbi-kyc-verify.xyz/update or funds will be frozen.' },
+    { address: 'VM-PRIZE', body: 'Congratulations! You have won Rs.10,00,000 in the Amazon lucky draw. Claim your prize now: http://amazon-prize.xyz/claim' },
+    { address: '+1-555-0199', body: 'Your package delivery failed. Pay customs clearance fee of Rs.299 at http://dhl-customs.top/fee or parcel will be returned to sender.' },
+    { address: 'HP-INCOME', body: 'Income Tax Department: Tax refund of Rs.15,420 is pending. Verify your bank account at http://incometax-refund.in/claim within 24 hours.' },
+    { address: '+91-99000-22222', body: 'Your PAN card has been deactivated by the IT department. Reactivate now at http://pan-reactivate.online/verify or face legal consequences.' },
+
+    // ── Hindi (5) ────────────────────────────────────────────────────────────
+    { address: '+91-87654-11111', body: 'प्रिय ग्राहक, आपका बिजली कनेक्शन आज रात 9:30 बजे काट दिया जाएगा। तुरंत कॉल करें: 9876543210' },
+    { address: 'VM-SBIHI', body: 'आपके बैंक खाते में संदिग्ध गतिविधि पाई गई है। KYC अपडेट करें: http://sbi-kyc-update.xyz/verify नहीं तो खाता ब्लॉक हो जाएगा।' },
+    { address: '+91-76543-22222', body: 'बधाई हो! आपको KBC लॉटरी में ₹25,00,000 का इनाम मिला है। दावा करें: http://kbc-lottery.ml/win' },
+    { address: 'HP-CBIHI', body: 'CBI सूचना: आपके खिलाफ मनी लॉन्ड्रिंग का केस दर्ज है। डिजिटल अरेस्ट वारंट जारी। बचने के लिए संपर्क करें: 9911000000' },
+    { address: '+91-65432-33333', body: 'आपका आधार कार्ड 24 घंटे में ब्लॉक हो जाएगा। रिएक्टिवेट करें: http://uidai-secure.tk/update' },
+
+    // ── Hinglish (5) ─────────────────────────────────────────────────────────
+    { address: '+91-88765-11111', body: 'Dear customer, aapka electricity connection aaj raat 9:30 baje band ho jayega. Turant bill pay karein nahi to permanent cut ho jayega. Call: 9876543210' },
+    { address: 'AD-CBIBK', body: 'CBI ALERT: Aapke naam pe money laundering case darj hua hai. Digital arrest warrant jaari hone wala hai. Turant officer se sampark karein: 9911000000' },
+    { address: '+91-77654-22222', body: 'Aapka SBI bank khata suspend ho gaya hai KYC incomplete hone ki wajah se. Abhi verify karein: http://sbi-update.xyz/kyc warna aapke paise freeze ho jayenge.' },
+    { address: 'HP-LOTTO', body: 'Badhai ho! Aapne Rs.50,00,000 ka inaam jeeta hai humaare lucky draw mein. Claim karne ke liye turant link pe click karein: http://prize-claim.ml/winner' },
+    { address: '+91-66543-33333', body: 'Aapka Aadhaar card block hone wala hai. 24 ghante mein verify karein: http://uidai-verify.xyz/update nahi to aapki sabhi government services band ho jayengi.' },
   ];
   const t = scams[Math.floor(Math.random() * scams.length)];
   return { id: `sim_${Date.now()}`, ...t, date: Date.now(), read: false };

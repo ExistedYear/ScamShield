@@ -34,8 +34,8 @@ done
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 API_ROOT="$SCRIPT_DIR/smishing_detector"
 
-if [ -x "$SCRIPT_DIR/.venv/bin/python" ]; then
-  PYTHON="$SCRIPT_DIR/.venv/bin/python"
+if [ -x "$SCRIPT_DIR/venv/bin/python" ]; then
+  PYTHON="$SCRIPT_DIR/venv/bin/python"
 elif command -v python3 >/dev/null 2>&1; then
   PYTHON="python3"
 else
@@ -48,7 +48,7 @@ fi
 
 export SCAMSHIELD_HOST="$HOST"
 export SCAMSHIELD_PORT="$PORT"
-export SCAMSHIELD_DEBUG="${SCAMSHIELD_DEBUG:-true}"
+export SCAMSHIELD_DEBUG="${SCAMSHIELD_DEBUG:-false}"
 
 echo "Starting ScamShield Flask API at http://$HOST:$PORT"
 echo "Health check: http://$HOST:$PORT/health"

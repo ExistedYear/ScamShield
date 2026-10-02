@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ApiRoot = Join-Path $ProjectRoot "smishing_detector"
-$VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+$VenvPython = Join-Path $ProjectRoot "venv\Scripts\python.exe"
 
 if (Test-Path $VenvPython) {
     $Python = $VenvPython
@@ -24,7 +24,7 @@ if ($Install) {
 
 $env:SCAMSHIELD_HOST = $HostAddress
 $env:SCAMSHIELD_PORT = [string]$Port
-$env:SCAMSHIELD_DEBUG = "true"
+$env:SCAMSHIELD_DEBUG = "false"
 
 Write-Host "Starting ScamShield Flask API at http://${HostAddress}:${Port}"
 Write-Host "Health check: http://${HostAddress}:${Port}/health"

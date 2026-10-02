@@ -15,30 +15,53 @@ export default function DetailScreen({ route }) {
   const [result, setResult] = useState(initialResult || null);
   const [explanation, setExplanation] = useState(null);
   const [loading, setLoading] = useState(!initialResult);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
+    setLoading(!initialResult);
+    setResult(initialResult || null);
+    setExplanation(null);
+    setError(null);
+
     const run = async () => {
-      if (!result) {
+      let pred = initialResult || null;
+      if (!pred) {
         try {
-          setLoading(true);
-          const pred = await predictMessage(message.body);
-          setResult(pred);
-        } catch {}
+          const p = await predictMessage(message.body);
+          pred = p;
+          setResult(p);
+        } catch (err) {
+          setError('Prediction failed: ' + (err.message || 'API unreachable'));
+          setLoading(false);
+          return;
+        }
       }
       try {
         const expl = await explainMessage(message.body);
         setExplanation(expl);
-      } catch {}
+      } catch (err) {
+        setError('SHAP explanation failed: ' + (err.message || 'API unreachable'));
+      }
       setLoading(false);
     };
     run();
-  }, []);
+  }, [message.id]);
 
-  if (loading && !result) {
+  if (loading && !result && !error) {
     return (
       <View style={[s.center, { backgroundColor: colors.bg }]}>
         <ActivityIndicator size="large" color={colors.accent} />
         <Text style={[s.loadT, { color: colors.text2 }]}>Analyzing message…</Text>
+      </View>
+    );
+  }
+
+  if (error && !result) {
+    return (
+      <View style={[s.center, { backgroundColor: colors.bg }]}>
+        <Feather name="wifi-off" size={40} color={colors.text3} />
+        <Text style={[s.loadT, { color: colors.text2 }]}>{error}</Text>
+        <Text style={[s.loadT, { color: colors.text3, fontSize: 12, marginTop: 4 }]}>Try going back and opening the message again.</Text>
       </View>
     );
   }
@@ -120,10 +143,9 @@ export default function DetailScreen({ route }) {
           </View>
         )}
 
-        {!explanation && !loading && (
+        {!explanation && !loading && !error && (
           <View style={{ marginTop: 20, alignItems: 'center' }}>
-            <ActivityIndicator size="small" color={colors.accent} />
-            <Text style={[s.loadT, { color: colors.text3, fontSize: 11 }]}>Loading explanation…</Text>
+            <Text style={[s.loadT, { color: colors.text3, fontSize: 11 }]}>Explanation unavailable</Text>
           </View>
         )}
       </View>

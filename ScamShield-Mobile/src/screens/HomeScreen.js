@@ -109,11 +109,6 @@ export default function HomeScreen({ navigation }) {
     setScanning(null);
   };
 
-  const handleScanAll = async () => {
-    const unscanned = messages.filter((m) => !scanResults[m.id]);
-    for (const msg of unscanned) await handleScan(msg);
-  };
-
   const handleSimulate = () => {
     const newMsg = simulateIncomingSms();
     setMessages((prev) => [newMsg, ...prev]);
@@ -187,10 +182,6 @@ export default function HomeScreen({ navigation }) {
 
       {/* Action Buttons */}
       <View style={styles.actionRow}>
-        <TouchableOpacity onPress={handleScanAll} style={[styles.actionBtn, { backgroundColor: colors.accent }]} activeOpacity={0.8}>
-          <Feather name="zap" size={14} color="#fff" />
-          <Text style={styles.actionBtnText}>Scan All</Text>
-        </TouchableOpacity>
         <TouchableOpacity onPress={handleSimulate} style={[styles.actionBtnOutline, { borderColor: colors.border }]} activeOpacity={0.8}>
           <Feather name="plus" size={14} color={colors.text2} />
           <Text style={[styles.actionBtnOutlineText, { color: colors.text2 }]}>Simulate SMS</Text>

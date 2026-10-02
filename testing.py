@@ -2,7 +2,7 @@ import requests
 import json
 
 # --- CONFIGURATION ---
-TUNNEL_URL = "https://45865516a6c414.lhr.life"
+TUNNEL_URL = "http://localhost:5000"
 
 # Endpoints mapped to your specific API structure
 BATCH_PREDICT_URL = f"{TUNNEL_URL}/batch_predict"
@@ -71,8 +71,21 @@ def run_benchmark():
 
         print("\n📝 --- TESTING RESULTS ---")
         for idx, (case, pred) in enumerate(zip(TEST_CASES, predictions), 1):
-            ai_prediction = str(pred).lower().strip()
-            is_correct = ai_prediction == case["expected"]
+            if isinstance(pred, dict):
+                ai_prediction = str(pred.get("label", "")).lower().strip()
+                ai_confidence = pred.get("confidence", 0)
+                ai_risk = pred.get("risk_level", "?")
+            else:
+                ai_prediction = str(pred).lower().strip()
+                ai_confidence = 0
+                ai_risk = "?"
+            expected = case["expected"]
+            if expected in ("scam", "spam"):
+                is_correct = ai_prediction in ("spam", "scam")
+            elif expected in ("ham", "safe"):
+                is_correct = ai_prediction in ("ham", "safe")
+            else:
+                is_correct = ai_prediction == expected
 
             lang = case["lang"]
             metrics[lang]["total"] += 1
@@ -82,7 +95,8 @@ def run_benchmark():
                 metrics[lang]["correct"] += 1
                 status = "✅ PASS"
             else:
-                status = f"❌ FAIL (AI said: {ai_prediction.upper()} | Expected: {case['expected'].upper()})"
+                conf_str = f" [{ai_confidence:.1%}, {ai_risk}]" if ai_confidence else ""
+                status = f"❌ FAIL (AI said: {ai_prediction.upper()}{conf_str} | Expected: {case['expected'].upper()})"
 
             print(f"[{idx}/{total_tests}] Lang: {lang.ljust(8)} | Status: {status}")
             if not is_correct:

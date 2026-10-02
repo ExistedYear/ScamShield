@@ -9,26 +9,33 @@ export default function UrlAnalysis({ urlSignals }) {
   if (!urlSignals) return null;
 
   const {
-    url_count = 0,
     has_url = 0,
     has_ip_url = 0,
-    has_short_url = 0,
+    has_shortened_url = 0,
     suspicious_tld = 0,
+    has_http = 0,
+    has_https = 0,
+    has_legit_domain = 0,
+    num_urls = 0,
+    max_url_len = 0,
   } = urlSignals;
 
-  if (!has_url && url_count === 0) return null;
+  if (!has_url && num_urls === 0) return null;
 
   const flags = [];
+  const safe = [];
   if (has_ip_url) flags.push({ text: 'IP address used instead of domain', level: 'high' });
-  if (has_short_url) flags.push({ text: 'URL shortener detected — hides real destination', level: 'high' });
+  if (has_shortened_url) flags.push({ text: 'URL shortener detected — hides real destination', level: 'high' });
   if (suspicious_tld) flags.push({ text: 'Suspicious top-level domain (.xyz, .top, etc.)', level: 'medium' });
-  if (url_count > 2) flags.push({ text: `Multiple URLs found (${url_count})`, level: 'medium' });
-  if (!flags.length && has_url) flags.push({ text: 'URLs present — exercise caution', level: 'low' });
+  if (has_http && !has_https) flags.push({ text: 'HTTP link — not encrypted, easily intercepted', level: 'medium' });
+  if (num_urls > 2) flags.push({ text: `Multiple URLs found (${num_urls})`, level: 'low' });
+  if (has_legit_domain) safe.push({ text: 'Verified legitimate domain detected', level: 'safe' });
+  if (!flags.length && !safe.length && has_url) safe.push({ text: 'URLs present — no obvious threat signals', level: 'safe' });
 
   return (
     <View style={styles.container}>
       <Text style={[styles.title, { color: colors.text3 }]}>
-        <Feather name="link" size={10} /> URL ANALYSIS — {url_count || (has_url ? '1+' : '0')} LINK(S) FOUND
+        <Feather name="link" size={10} /> URL ANALYSIS — {num_urls || (has_url ? '1+' : '0')} LINK(S) FOUND
       </Text>
       <View style={[styles.card, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
         {flags.map((flag, i) => {
@@ -36,7 +43,7 @@ export default function UrlAnalysis({ urlSignals }) {
             flag.level === 'high' ? colors.red : flag.level === 'medium' ? colors.amber : colors.text2;
           return (
             <View
-              key={i}
+              key={`flag-${i}`}
               style={[styles.row, i < flags.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border }]}
             >
               <View
@@ -55,6 +62,28 @@ export default function UrlAnalysis({ urlSignals }) {
                 </Text>
               </View>
               <Text style={[styles.flagText, { color: colors.text2 }]}>{flag.text}</Text>
+            </View>
+          );
+        })}
+        {safe.map((item, i) => {
+          const showDivider = flags.length > 0 && i === 0;
+          return (
+            <View
+              key={`safe-${i}`}
+              style={[styles.row, showDivider && { borderTopWidth: 1, borderTopColor: colors.border }]}
+            >
+              <View
+                style={[
+                  styles.badge,
+                  {
+                    backgroundColor: colors.greenSoft,
+                    borderColor: colors.greenBorder,
+                  },
+                ]}
+              >
+                <Feather name="check-circle" size={10} color={colors.green} />
+              </View>
+              <Text style={[styles.flagText, { color: colors.green }]}>{item.text}</Text>
             </View>
           );
         })}

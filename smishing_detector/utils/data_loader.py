@@ -53,8 +53,7 @@ LEGIT_DOMAINS = {
 }
 
 TRUSTED_TLDS = {
-    "com", "org", "net", "edu", "gov", "gov.in", "co.uk", "au",
-    "ca", "de", "fr", "in", "co.in", "sbi",
+    "gov", "gov.in", "edu", "sbi",
 }
 
 URL_FEATURE_COLS = [

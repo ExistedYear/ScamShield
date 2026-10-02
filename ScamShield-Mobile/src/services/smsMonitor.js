@@ -7,7 +7,7 @@
  * run less often depending on battery and OEM policy.
  */
 
-import { PermissionsAndroid, Platform } from 'react-native';
+import { PermissionsAndroid, Platform, NativeModules } from 'react-native';
 import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import * as Notifications from 'expo-notifications';
@@ -18,6 +18,15 @@ import { addScanResult, getSettings } from '../utils/storage';
 const LAST_SEEN_KEY = 'scamshield_last_sms_date';
 const SMS_LIMIT = 30;
 export const MONITOR_TASK = 'SCAMSHIELD_SMS_MONITOR';
+export const smsLog = [];
+const MAX_LOG = 50;
+
+function _log(msg) {
+  const entry = `[${new Date().toLocaleTimeString('en-IN')}] ${msg}`;
+  smsLog.unshift(entry);
+  if (smsLog.length > MAX_LOG) smsLog.pop();
+  console.log('[ScamShield]', msg);
+}
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -65,6 +74,7 @@ async function sendThreatNotification(address, body, confidence) {
 export function readInboxSms(count = SMS_LIMIT) {
   return new Promise((resolve) => {
     if (Platform.OS !== 'android') {
+      _log('readInboxSms skipped — not Android');
       resolve([]);
       return;
     }
@@ -73,26 +83,24 @@ export function readInboxSms(count = SMS_LIMIT) {
       try {
         const granted = await requestSmsPermission();
         if (!granted) {
+          _log('readInboxSms — SMS permission denied');
           resolve([]);
           return;
         }
 
-        const SmsAndroid = require('react-native-get-sms-android').default;
-        SmsAndroid.list(
-          JSON.stringify({ box: 'inbox', maxCount: count }),
-          () => resolve([]),
-          (_count, smsList) => {
-            const messages = JSON.parse(smsList).map((sms) => ({
-              id: String(sms._id),
-              address: sms.address,
-              body: sms.body,
-              date: sms.date,
-              read: sms.read === 1,
-            }));
-            resolve(messages);
-          }
-        );
-      } catch (_) {
+        _log('readInboxSms calling native module...');
+        const raw = await NativeModules.SmsReaderModule.readSms(count);
+        _log('readInboxSms got ' + raw.length + ' messages');
+        const messages = raw.map((sms) => ({
+          id: String(sms._id),
+          address: sms.address,
+          body: sms.body,
+          date: parseInt(sms.date, 10),
+          read: sms.read === 1,
+        }));
+        resolve(messages);
+      } catch (err) {
+        _log('readInboxSms ERROR: ' + err.message);
         resolve([]);
       }
     })();
@@ -116,8 +124,11 @@ export async function scanNewMessages({ notify = true } = {}) {
   const newMsgs = await getNewMessages();
 
   if (!newMsgs.length) {
+    _log('scanNewMessages — 0 new msgs');
     return { scanned: 0, threats: 0 };
   }
+
+  _log('scanNewMessages — ' + newMsgs.length + ' new, scanning...');
 
   let threats = 0;
   for (const msg of newMsgs) {

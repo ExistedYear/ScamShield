@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+data/
+train.py
+evaluate.py
+evaluate_custom.py
+evaluate_multilingual.py
+manual_test.py
+adversarial/
+.streamlit/

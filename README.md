@@ -1,3 +1,14 @@
+---
+title: ScamShield
+emoji: 🛡️
+colorFrom: red
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: true
+license: mit
+---
+
 # ScamShield — Technical Report
 
 ## Multilingual Smishing Detection: XLM-RoBERTa + URL Fusion + Mobile Deployment

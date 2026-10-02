@@ -28,6 +28,7 @@ export default function UrlAnalysis({ urlSignals }) {
   if (has_shortened_url) flags.push({ text: 'URL shortener detected — hides real destination', level: 'high' });
   if (suspicious_tld) flags.push({ text: 'Suspicious top-level domain (.xyz, .top, etc.)', level: 'medium' });
   if (has_http && !has_https) flags.push({ text: 'HTTP link — not encrypted, easily intercepted', level: 'medium' });
+  if (has_url && !has_legit_domain && !has_ip_url && !has_shortened_url && !suspicious_tld) flags.push({ text: 'Domain not verified as legitimate', level: 'medium' });
   if (num_urls > 2) flags.push({ text: `Multiple URLs found (${num_urls})`, level: 'low' });
   if (has_legit_domain) safe.push({ text: 'Verified legitimate domain detected', level: 'safe' });
   if (!flags.length && !safe.length && has_url) safe.push({ text: 'URLs present — no obvious threat signals', level: 'safe' });

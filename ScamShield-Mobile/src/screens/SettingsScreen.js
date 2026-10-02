@@ -7,7 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import { useTheme } from '@react-navigation/native';
 import { getSettings, saveSettings, clearScanHistory, getScanHistory } from '../utils/storage';
 import { healthCheck, setBaseUrl, getBaseUrl } from '../services/api';
-import { startMonitoring, stopMonitoring } from '../services/smsMonitor';
+import { startMonitoring, stopMonitoring, smsLog } from '../services/smsMonitor';
 
 export default function SettingsScreen({ onToggleTheme }) {
   const { colors, dark } = useTheme();
@@ -194,6 +194,23 @@ export default function SettingsScreen({ onToggleTheme }) {
           <Text style={[s.aboutV, { color: colors.text }]}>1.0.0</Text>
         </View>
       </View>
+
+      {/* SMS Debug Log */}
+      <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <View style={s.cardH}>
+          <Feather name="terminal" size={16} color={colors.accent} />
+          <Text style={[s.cardTitle, { color: colors.text }]}>SMS Debug Log</Text>
+        </View>
+        {smsLog.length === 0 ? (
+          <Text style={[s.desc, { color: colors.text3 }]}>No SMS events yet. Open the Inbox tab and toggle monitoring.</Text>
+        ) : (
+          <View style={[s.logBox, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
+            {smsLog.slice(0, 25).map((entry, i) => (
+              <Text key={i} style={[s.logLine, { color: colors.text2 }]}>{entry}</Text>
+            ))}
+          </View>
+        )}
+      </View>
     </ScrollView>
   );
 }
@@ -221,4 +238,6 @@ const s = StyleSheet.create({
   aboutRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5 },
   aboutK: { fontSize: 12, fontWeight: '600' },
   aboutV: { fontSize: 12, fontWeight: '600' },
+  logBox: { borderWidth: 1, borderRadius: 10, padding: 10, maxHeight: 400 },
+  logLine: { fontSize: 10, fontFamily: 'monospace', lineHeight: 16, marginBottom: 2 },
 });

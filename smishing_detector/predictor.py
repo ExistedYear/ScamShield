@@ -265,81 +265,88 @@ class SmishingPredictor:
                         spam_rule: float, ham_rule: float,
                         uf: dict) -> Tuple[str, str, float, bool, str]:
         """
-        Green Channel — distinguishes SCAMS from harmless promotional spam.
+        Unified URL-aware channel checking.
 
-        This project detects smishing (scam SMS), NOT general spam.
-        A message like "Congratulations! Free 5G SIM upgrade. Visit your nearest
-        Airtel store" is promotional spam, not a scam — it has no phishing URL,
-        no threats, no urgency to click a link.
+        For EVERY message that has URLs, check ALL of them against
+        GSB first, then static whitelist:
 
-        Logic:
-        1. Hard scam signals (spam_rule >= 0.55) → NEVER clear. These have
-           explicit phishing patterns like "account suspended", "KYC update",
-           "digital arrest" with suspicious URLs.
-        2. Soft spam (spam_rule < 0.55) + ALL URLs are verified legit domains
-           → GREEN CHANNEL → downgrade to "safe" (it's just an ad/promo).
-        3. Soft spam + NO URLs at all + ham patterns detected → also GREEN
-           CHANNEL (legit transactional or brand notification).
-
-        Returns: (label, risk, final_prob, green_cleared, green_reason)
+         1. ANY URL → known_malicious  => SPAM (escalate)
+         2. ALL URLs → known_safe      => SAFE (green channel)
+         3. ANY URL → unverified       => keep model verdict (no override)
+         4. No URLs + ham patterns     => SAFE (promo/ad without links)
         """
-        # Never green-channel if hard scam patterns are present
-        if spam_rule >= 0.55:
-            risk = "high" if final_prob >= 0.75 else "medium" if final_prob >= self.threshold else "low"
-            return label, risk, final_prob, False, ""
-
-        # Only applies to messages that would otherwise be classified as spam
-        if label != "spam":
-            risk = "low"
-            return label, risk, final_prob, False, ""
-
-        # Build unified legit domain set (safe_browsing + data_loader)
-        legit_domains = set()
-        try:
-            from utils.safe_browsing import get_checker
-            legit_domains |= get_checker().fallback_legit_domains
-        except Exception:
-            pass
-        try:
-            from utils.data_loader import LEGIT_DOMAINS
-            legit_domains |= LEGIT_DOMAINS
-        except Exception:
-            pass
-
         has_url = bool(uf.get("has_url"))
-        has_suspicious = bool(uf.get("suspicious_tld") or uf.get("has_ip_url"))
+        risk = "high" if final_prob >= 0.75 else "medium" if final_prob >= self.threshold else "low"
 
-        # Case 1: Message has URLs — check if ALL are legit
-        if has_url and not has_suspicious:
+        # ── URL checking (runs for ALL messages with URLs) ──────────────────
+        if has_url:
             try:
                 import tldextract
                 urls = extract_urls(message)
                 if urls:
-                    all_legit = True
+                    # static whitelist
+                    static_legit = set()
+                    try:
+                        from utils.safe_browsing import get_checker
+                        static_legit |= get_checker().fallback_legit_domains
+                    except Exception:
+                        pass
+                    try:
+                        from utils.data_loader import LEGIT_DOMAINS
+                        static_legit |= LEGIT_DOMAINS
+                    except Exception:
+                        pass
+
+                    checker = None
+                    try:
+                        from utils.safe_browsing import get_checker as _gc
+                        checker = _gc()
+                    except Exception:
+                        pass
+
+                    all_safe = True
                     for url in urls:
                         ext = tldextract.extract(url)
                         full_domain = f"{ext.domain}.{ext.suffix}".lower().strip(".")
-                        if full_domain not in legit_domains:
-                            all_legit = False
-                            break
-                    if all_legit:
+                        if not full_domain:
+                            continue
+
+                        # 1. GSB first
+                        status = "unknown"
+                        if checker:
+                            try:
+                                status = checker.check_domain_status(full_domain)
+                            except Exception:
+                                pass
+
+                        if status == "known_malicious":
+                            return "spam", "high", max(final_prob, 0.90), False, ""
+                        if status == "known_safe":
+                            continue
+                        if full_domain in static_legit:
+                            continue
+                        # unverified — don't green-channel
+                        all_safe = False
+                        break
+
+                    if all_safe:
+                        if label == "spam" and spam_rule >= 0.35:
+                            # message looks scammy but all URLs are legit → cap at medium
+                            return "spam", "medium", min(final_prob, 0.55), True, \
+                                "URLs verified legitimate but message content is suspicious"
                         return "safe", "low", min(final_prob, 0.40), True, \
                             "all URLs verified as legitimate domains"
             except Exception:
                 pass
 
-        # Case 2: No URL + ham patterns present + low spam rule score
-        # e.g. "Airtel: Congratulations! Eligible for free 5G upgrade. Visit store."
-        if not has_url and ham_rule >= 0.35 and spam_rule < 0.35:
+            # URLs exist but at least one is unverified → keep model verdict
+            return label, risk, final_prob, False, ""
+
+        # ── No URLs: check for harmless promo/ad patterns ───────────────────
+        if ham_rule >= 0.35 and spam_rule < 0.35 and label == "spam":
             return "safe", "low", min(final_prob, 0.35), True, \
                 "no URLs + legitimate transactional patterns detected"
 
-        # Case 3: Has legit domain URL + ham patterns dominate spam patterns
-        if has_url and uf.get("has_legit_domain") and ham_rule > spam_rule:
-            return "safe", "low", min(final_prob, 0.42), True, \
-                "legit domain URL + stronger ham signals than scam signals"
-
-        risk = "high" if final_prob >= 0.75 else "medium" if final_prob >= self.threshold else "low"
         return label, risk, final_prob, False, ""
 
     def predict(self, message: str) -> dict:

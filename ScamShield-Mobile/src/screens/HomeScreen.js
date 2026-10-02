@@ -24,6 +24,7 @@ export default function HomeScreen({ navigation }) {
   const [stats,       setStats]       = useState({ total: 0, threats: 0, safe: 0 });
   const [monitoring,  setMonitoring]  = useState(false);
   const [monitorBusy, setMonitorBusy] = useState(false);
+  const [lastScanned, setLastScanned] = useState(null);
   const pollRef = useRef(null);
 
   // ── Data loading ──────────────────────────────────────────────────────────
@@ -31,7 +32,13 @@ export default function HomeScreen({ navigation }) {
   const loadMessages = useCallback(async () => {
     if (USE_REAL_SMS) {
       const real = await readInboxSms(30);
-      setMessages(real.length ? real : getDemoMessages());
+      setMessages((prev) => {
+        const simMsgs = prev.filter((m) => m.id.startsWith('sim_'));
+        const inbox = real.length ? real : (prev.length === 0 ? getDemoMessages() : []);
+        const seen = new Set(simMsgs.map((m) => m.id));
+        const deduped = inbox.filter((m) => !seen.has(m.id));
+        return [...simMsgs, ...deduped];
+      });
     } else {
       setMessages(getDemoMessages());
     }
@@ -61,8 +68,7 @@ export default function HomeScreen({ navigation }) {
       const active = await isMonitoring();
       setMonitoring(active);
       if (active) {
-        await scanNewMessages().catch(() => {});
-        await loadData();
+        await refreshNow();
       }
     })();
   }, [loadData]);
@@ -71,10 +77,8 @@ export default function HomeScreen({ navigation }) {
 
   useEffect(() => {
     if (!monitoring || !USE_REAL_SMS) return;
-    pollRef.current = setInterval(async () => {
-      await scanNewMessages().catch(() => {});
-      await loadData();
-    }, 15000); // refresh message list every 15s
+    refreshNow();
+    pollRef.current = setInterval(refreshNow, 5000);
     return () => clearInterval(pollRef.current);
   }, [monitoring, loadData]);
 
@@ -114,6 +118,12 @@ export default function HomeScreen({ navigation }) {
     setMessages((prev) => [newMsg, ...prev]);
   };
 
+  const refreshNow = async () => {
+    await scanNewMessages().catch(() => {});
+    await loadData();
+    setLastScanned(new Date());
+  };
+
   const toggleMonitoring = async () => {
     setMonitorBusy(true);
     if (monitoring) {
@@ -123,8 +133,7 @@ export default function HomeScreen({ navigation }) {
       const { ok, reason } = await startMonitoring();
       setMonitoring(ok);
       if (ok) {
-        await scanNewMessages().catch(() => {});
-        await loadData();
+        await refreshNow();
       } else if (reason) {
         Alert.alert('Monitoring unavailable', reason);
       }
@@ -156,7 +165,12 @@ export default function HomeScreen({ navigation }) {
         backgroundColor: monitoring ? colors.accentSoft : colors.surface,
         borderColor:     monitoring ? colors.accent      : colors.border,
       }]}>
-        <View style={styles.monitorLeft}>
+        <TouchableOpacity
+          onPress={monitoring ? refreshNow : undefined}
+          disabled={!monitoring}
+          activeOpacity={0.6}
+          style={styles.monitorLeft}
+        >
           <Feather name="radio" size={16} color={monitoring ? colors.accent : colors.text3} />
           <View style={styles.monitorText}>
             <Text style={[styles.monitorTitle, { color: monitoring ? colors.accent : colors.text }]}>
@@ -164,11 +178,13 @@ export default function HomeScreen({ navigation }) {
             </Text>
             <Text style={[styles.monitorSub, { color: colors.text3 }]}>
               {monitoring
-                ? 'Auto-scanning incoming SMS • AES-256 encrypted'
+                ? (lastScanned
+                    ? `Last scan: ${lastScanned.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} • Tap to refresh`
+                    : 'Auto-scanning incoming SMS • AES-256 encrypted')
                 : 'Enable to auto-scan incoming messages'}
             </Text>
           </View>
-        </View>
+        </TouchableOpacity>
         {monitorBusy
           ? <ActivityIndicator size="small" color={colors.accent} />
           : <Switch

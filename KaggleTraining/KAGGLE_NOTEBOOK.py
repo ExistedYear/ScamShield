@@ -47,7 +47,7 @@ print(f"Files found: {os.listdir(DATASET_PATH)}")
 # ── CELL 3: Hyperparameters ───────────────────────────────────────────────────
 
 EPOCHS             = 10
-BATCH_SIZE         = 16       # XLM-RoBERTa is heavier than DistilBERT
+BATCH_SIZE         = 16       # fits XLM-RoBERTa memory footprint
 LR                 = 1e-5
 WEIGHT_DECAY       = 0.01
 THRESHOLD          = 0.55

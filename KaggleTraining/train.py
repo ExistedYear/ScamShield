@@ -2,15 +2,8 @@
 train.py — ScamShield multilingual smishing detector training script
 Designed to run on Kaggle (GPU P100/T4).
 
-Phase 3 changes vs Phase 2:
-  • Model: XLM-RoBERTa (was DistilBERT) — multilingual, 100 languages
-  • Data: +dbarbedillo (English+Hindi) +rajnathpatel (Hindi/Hinglish)
-  • freeze_bert_layers: 0 (XLM-RoBERTa needs full fine-tuning for multilingual)
-  • Dropout: 0.3 (was 0.4 — larger model, less aggressive dropout needed)
-  • LR: 1e-5 (unchanged)
-  • Threshold: 0.55 (unchanged)
-  • Label smoothing: 0.05 (unchanged)
-  • Early stopping patience: 4 (unchanged)
+Model: XLM-RoBERTa — multilingual, 100 languages
+Data: UCI + Deysi + Gaurav + Indian legit + dbarbedillo (English+Hindi) + rajnathpatel (Hindi/Hinglish)
 """
 
 import os
@@ -29,7 +22,7 @@ from dataset import build_dataloaders
 
 # ── Hyperparameters ───────────────────────────────────────────────────────────
 EPOCHS               = 10
-BATCH_SIZE           = 16          # smaller batch — XLM-RoBERTa is heavier than DistilBERT
+BATCH_SIZE           = 16          # fits XLM-RoBERTa memory footprint
 LR                   = 1e-5
 WEIGHT_DECAY         = 0.01
 THRESHOLD            = 0.55

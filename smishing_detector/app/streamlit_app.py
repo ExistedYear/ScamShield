@@ -144,4 +144,4 @@ if analyse_btn and message_input:
     with st.expander("View Raw Analysis"):
         st.json(result)
 
-st.markdown('<p class="footer">CSE AI Engineering Lab · Phase 3 · Model: XLM-RoBERTa + URL Feature Fusion · Dataset: UCI SMS Spam Collection</p>', unsafe_allow_html=True)
+st.markdown('<p class="footer">ScamShield · Model: XLM-RoBERTa + URL Feature Fusion</p>', unsafe_allow_html=True)

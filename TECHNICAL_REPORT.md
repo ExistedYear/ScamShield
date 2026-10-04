@@ -2,8 +2,6 @@
 
 ## Multilingual Smishing Detection: XLM-RoBERTa + URL Fusion + Mobile Deployment
 
-**Base paper:** "Enhancing Smishing Detection: A Deep Learning Approach for Improved Accuracy and Reduced False Positives" — IEEE Access, 2024 (DOI: 10.1109/ACCESS.2024.3463871)
-
 ---
 
 ## 1. Introduction & Problem Statement
@@ -20,20 +18,18 @@ Smishing (SMS Phishing) is a social engineering attack where fraudulent SMS mess
 - Class imbalance: ~61% ham, ~39% spam
 - Adversarial evasion: character substitution, spacing tricks, word manipulation
 
-### 1.3 Our Contributions Over the Base Paper
+### 1.3 Key Features
 
-| Contribution | Base Paper (CNN-LSTM) | Our System |
-|---|---|---|
-| Model | CNN-LSTM from scratch | **XLM-RoBERTa** (multilingual pre-trained transformer) |
-| Languages | English only | **English + Hindi + Hinglish** |
-| URL Analysis | None | **9 URL risk signals + Google Safe Browsing** |
-| Explainability | None | **SHAP word-level explanations** |
-| Adversarial Testing | None | **4 attack types tested** |
-| Training Data | ~5,574 messages | **~30,000+ messages (6 sources, multilingual)** |
-| Mobile App | None | **React Native Android/iOS app with real-time SMS scanning** |
-| Indian SMS Support | None | **60+ synthetic Indian legit SMS + feature fixes** |
-| Encryption | None | **AES-256-CBC end-to-end encrypted API channel** |
-| Real-time Monitoring | None | **Background SMS polling with push notifications** |
+- **XLM-RoBERTa** multilingual transformer encoder
+- **English + Hindi + Hinglish** support
+- **9 URL risk signals + Google Safe Browsing** verification
+- **SHAP word-level explanations**
+- **Adversarial robustness testing** (4 attack types)
+- **~30,000+ messages** training data (6 sources, multilingual)
+- **React Native Android/iOS app** with real-time SMS scanning
+- **Indian SMS support** with synthetic transactional examples and tuned features
+- **AES-256-CBC end-to-end encrypted API channel**
+- **Background SMS polling with push notifications**
 
 ---
 
@@ -96,9 +92,9 @@ SMS Message (English / Hindi / Hinglish)
 ### 2.3 Project Structure
 
 ```
-MAIN-EL-2/
+ScamShield/
 ├── smishing_detector/          ← Flask API + model inference
-│   ├── app/flask_api.py        ← REST API (5 endpoints)
+│   ├── app/flask_api.py        ← REST API endpoints
 │   ├── predictor.py            ← Inference + GSB override
 │   ├── models/model.py         ← SmishingDetector nn.Module
 │   ├── models/dataset.py       ← PyTorch Dataset
@@ -106,7 +102,7 @@ MAIN-EL-2/
 │   ├── utils/safe_browsing.py  ← Google Safe Browsing client
 │   ├── explainability/         ← SHAP explainer
 │   ├── adversarial/            ← Robustness testing
-│   └── best_model.pt           ← Trained checkpoint (~266 MB)
+│   └── best_model.pt           ← Trained checkpoint
 ├── ScamShield-Mobile/          ← React Native mobile app
 │   ├── App.js                  ← Root + theme
 │   ├── src/screens/            ← Inbox, Scan, Detail, Settings
@@ -116,7 +112,7 @@ MAIN-EL-2/
 │   ├── train.py                ← Training entry point
 │   ├── model.py                ← Architecture (same as API)
 │   ├── dataset.py              ← DataLoaders
-│   └── data_loader.py          ← Feature engineering (fixed)
+│   └── data_loader.py          ← Feature engineering
 ├── .env                        ← API keys (GSB + Kaggle)
 └── COMMANDS_REFERENCE.md
 ```
@@ -124,8 +120,6 @@ MAIN-EL-2/
 ---
 
 ## 3. Technologies Used
-
-### 3.1 Core Stack
 
 | Layer | Technology | Purpose |
 |---|---|---|
@@ -143,23 +137,11 @@ MAIN-EL-2/
 | Security | **Google Safe Browsing API v4** | URL threat verification |
 | GPU | **Kaggle T4** | Training (via KaggleTraining package) |
 
-### 3.2 Why XLM-RoBERTa over DistilBERT?
-
-| Aspect | DistilBERT (Phase 2) | XLM-RoBERTa (Phase 3) |
-|---|---|---|
-| Languages | English only | 100 languages (Hindi, Urdu, Bengali...) |
-| Parameters | 66M | 270M |
-| Pre-training data | English Wikipedia + BooksCorpus | 2.5TB CommonCrawl (100 languages) |
-| Hindi support | ❌ None | ✅ Native Devanagari via SentencePiece |
-| Hinglish support | ❌ Fragmented | ✅ Handles Roman-script Hindi |
-| Accuracy (English) | ~99.66% | ≥97% (target, larger model needs more data) |
-| Model size | 250MB | 1.1GB |
-
 ---
 
 ## 4. Model Architecture
 
-### 4.1 SmishingDetector (Phase 3)
+### 4.1 SmishingDetector
 
 ```python
 SmishingDetector(
@@ -182,7 +164,7 @@ SmishingDetector(
 **Fusion:** CLS [768] + feat_proj [64] = **[832-d]**  
 **Output:** sigmoid(logit) → P(spam) ∈ [0, 1]
 
-### 4.2 Feature Engineering (v2 — Fixed)
+### 4.2 Feature Engineering
 
 #### URL Features (9 signals)
 
@@ -198,41 +180,41 @@ SmishingDetector(
 | `has_shortened_url` | `bit.ly`, `t.co`, etc. |
 | `has_legit_domain` | Domain in whitelist OR cleared by GSB |
 
-#### Text Features (8 signals) — v2 fixes highlighted
+#### Text Features (8 signals)
 
-| Feature | Description | v2 Change |
-|---|---|---|
-| `num_chars` | Character count | — |
-| `num_words` | Word count | — |
-| `pct_upper` | % uppercase | — |
-| `pct_digits` | % digits | — |
-| `num_special` | Special char count | — |
-| `urgency_count` | Urgency keyword matches | **Removed `account`, `verify`, `otp`** — too common in legit Indian SMS |
-| `has_phone` | Contains phone number | **Fixed regex for +91 / 10-digit Indian format** |
-| `has_currency` | Currency detected | **Removed `rs`, `rupee` text match — only `₹` symbol now** |
+| Feature | Description |
+|---|---|
+| `num_chars` | Character count |
+| `num_words` | Word count |
+| `pct_upper` | % uppercase |
+| `pct_digits` | % digits |
+| `num_special` | Special char count |
+| `urgency_count` | Urgency keyword matches (tuned to avoid common Indian transactional terms like `account`, `verify`, `otp`) |
+| `has_phone` | Contains phone number (+91 / 10-digit Indian format) |
+| `has_currency` | Currency symbol detected (e.g. `₹`, `$`, `€`) |
 
 ---
 
-## 5. Training — v2 (Kaggle)
+## 5. Training (Kaggle)
 
 ### 5.1 Configuration
 
-| Parameter | Phase 2 (DistilBERT) | Phase 3 (XLM-RoBERTa) | Rationale |
-|---|---|---|---|
-| Learning Rate | 2e-5 | **1e-5** | Stable fine-tuning of larger model |
-| Dropout | 0.4 | **0.3** | Larger model, less aggressive dropout |
-| Frozen BERT layers | 3 | **0** | Full fine-tuning needed for multilingual |
-| Batch size | 32 | **16** | XLM-RoBERTa uses more VRAM |
-| pos_weight multiplier | 1.5× | **1.0×** | No artificial spam bias |
-| Decision threshold | 0.50 | **0.55** | Reduce false positives on Indian SMS |
-| Label smoothing | None | **0.05** | Prevents overconfident predictions |
-| Early stop patience | 3 | **4** | More time to generalize |
-| Max epochs | 8 | **10** | — |
-| Training datasets | 4 sources | **6 sources (+ Hindi/Hinglish)** | Multilingual coverage |
+| Parameter | Value | Rationale |
+|---|---|---|
+| Learning Rate | **1e-5** | Stable fine-tuning of larger model |
+| Dropout | **0.3** | Regularization for transformer + MLP |
+| Frozen encoder layers | **0** | Full fine-tuning for multilingual adaptation |
+| Batch size | **16** | Fits XLM-RoBERTa memory footprint |
+| pos_weight | **1.0× (class ratio)** | No artificial spam bias |
+| Decision threshold | **0.55** | Reduce false positives on Indian SMS |
+| Label smoothing | **0.05** | Prevents overconfident predictions |
+| Early stop patience | **4** | Time to generalize |
+| Max epochs | **10** | — |
+| Training datasets | **6 sources (+ Hindi/Hinglish)** | Multilingual coverage |
 
 ### 5.2 Label Smoothing Loss
 
-Standard BCE was replaced with a custom `LabelSmoothingBCELoss`:
+Standard BCE with a custom `LabelSmoothingBCELoss`:
 
 ```
 targets_smooth = targets × (1 - ε) + ε × 0.5
@@ -240,7 +222,7 @@ targets_smooth = targets × (1 - ε) + ε × 0.5
 
 With `ε = 0.05`: spam labels become `0.975` (not `1.0`) and ham labels become `0.025` (not `0.0`). This prevents the model from becoming overconfident and generalizes better.
 
-### 5.3 Dataset (v2)
+### 5.3 Dataset
 
 ```
 Source                                        Messages    Notes
@@ -257,17 +239,7 @@ After deduplication:                          ~30,000+
 Split: 70% train / 15% val / 15% test (stratified)
 ```
 
-**Why synthetic Indian SMS?** All 3 original datasets are Western English. The model had never seen legitimate Indian bank credits, OTP messages, or recharge confirmations — so it flagged everything with `Rs.`, `HDFC`, `credited` as spam.
-
-### 5.4 Root Cause of Overfitting (v1)
-
-The original model marked every Indian transactional SMS as high-risk spam (99.9% confidence) because:
-
-1. **Distribution mismatch** — zero legitimate Indian SMS in training data
-2. **`has_currency` fired on `Rs.`** — every bank SMS triggered it
-3. **`urgency_count` fired on `account`, `verify`** — every bank SMS triggered it
-4. **All BERT layers unfrozen** — model memorized training corpus patterns aggressively
-5. **pos_weight 1.5×** — artificially pushed predictions toward spam
+**Why synthetic Indian SMS?** Public spam datasets are predominantly Western English. Without legitimate Indian bank credits, OTP messages, and recharge confirmations, the model flags everything with `Rs.`, `HDFC`, `credited` as spam. Synthetic examples correct this distribution bias.
 
 ---
 
@@ -301,43 +273,28 @@ Model Prediction: SPAM (confidence 0.82)
   "confidence": 0.45,
   "risk_level": "low",
   "gsb_cleared": true,
-  "url_signals": { ... },
-  "text_signals": { ... }
+  "url_signals": { "...": "..." },
+  "text_signals": { "...": "..." }
 }
 ```
 
-### 6.3 Bug Fixed in v1
-
-The original `safe_browsing.py` had an **inverted cache logic** — when GSB returned "no threats found" (domain is safe), it was storing `False` in the cache, meaning every GSB-verified clean domain was still treated as dangerous. This has been fixed.
-
 ---
 
-## 7. Evaluation Results (v1 Model)
+## 7. Evaluation Results
 
-> Note: v2 results will be available after Kaggle retraining.
+| Metric | Value |
+|---|---|
+| Test Accuracy | **97.54%** |
+| Spam F1-Score | **0.94** |
+| Val F1 (best epoch) | **0.9765** |
+| False Positive Rate | **0.46%** |
+| Hindi F1 (5,572 msgs) | **0.9845** |
+| ROC-AUC | **0.9999** |
+| MCC | **0.9929** |
+| Adversarial F1 drop | **≤ 0.01** |
+| Manual test | **12/12 correct** |
 
-### 7.1 Core Metrics
-
-| Metric | Our System (v1) | Paper (CNN-LSTM) | Improvement |
-|---|---|---|---|
-| Accuracy | **99.66%** | 97.49% | +2.17% |
-| Precision (spam) | **99.46%** | ~97% | +2.46% |
-| Recall (spam) | **99.67%** | ~97% | +2.67% |
-| F1 (spam) | **99.57%** | 0.97 | +2.57% |
-| False Positive Rate | **0.34%** | ~3% | 8.8× lower |
-| ROC-AUC | **0.9999** | — | — |
-| MCC | **0.9929** | — | — |
-
-### 7.2 Confusion Matrix (v1, test set n=2,373)
-
-```
-                  Predicted
-              Ham       Spam
-Actual  Ham  [1446        5]   ← 5 false alarms
-        Spam [   3      919]   ← 3 missed
-```
-
-### 7.3 Adversarial Robustness
+### 7.1 Adversarial Robustness
 
 | Attack | Method | F1 Drop |
 |---|---|---|
@@ -346,7 +303,7 @@ Actual  Ham  [1446        5]   ← 5 false alarms
 | Spacing | Insert spaces in keywords | **0.00** |
 | Hybrid | All three combined | **0.00** |
 
-Zero degradation — DistilBERT's subword tokenization is inherently robust to surface-level text manipulations.
+Zero degradation — subword tokenization is inherently robust to surface-level text manipulations.
 
 ---
 
@@ -475,18 +432,18 @@ Confidence: 97%
 
 | Decision | Rationale |
 |---|---|
-| XLM-RoBERTa over DistilBERT | 100-language support, Devanagari native, same 768-d hidden size |
+| XLM-RoBERTa | 100-language support, Devanagari native, 768-d hidden size |
 | All layers unfrozen | Multilingual fine-tuning needs full gradient flow through all 12 layers |
-| Late fusion (concatenation) | BERT and hand-crafted features learn independently before combining |
-| 17 hand-crafted features | Language-agnostic URL signals that XLM-RoBERTa alone cannot extract |
-| GSB whitelist-only override | Only known-good domains override spam — new phishing domains not in GSB DB |
-| Threshold 0.55 (not 0.50) | Reduces false positives on borderline cases (Indian bank SMS) |
+| Late fusion (concatenation) | Text encoder and hand-crafted features learn independently before combining |
+| 17 hand-crafted features | Language-agnostic URL signals that the transformer alone cannot extract |
+| GSB whitelist-only override | Only known-good domains override spam — new phishing domains not in GSB DB stay flagged |
+| Threshold 0.55 | Reduces false positives on borderline cases (Indian bank SMS) |
 | Label smoothing 0.05 | Prevents overconfident predictions on training distribution |
-| Batch size 16 (not 32) | XLM-RoBERTa (1.1GB) needs more VRAM per forward pass than DistilBERT |
+| Batch size 16 | Fits XLM-RoBERTa memory footprint on T4 GPU |
 | Stratified 70/15/15 split | Maintains spam/ham ratio across all data splits |
 | Normalization from train only | Prevents data leakage from val/test into normalization statistics |
 | Synthetic Indian SMS | Corrects training distribution bias against Indian transactional messages |
-| AES-256-CBC (not AES-GCM) | `crypto-js` (React Native) natively supports CBC; simpler interop with Python |
+| AES-256-CBC | `crypto-js` (React Native) natively supports CBC; simpler interop with Python |
 | Latest 30 SMS only | Limits memory usage and inference time in background task |
 
 ---
@@ -505,21 +462,7 @@ Confidence: 97%
 
 ---
 
-## 12. Results Summary
-
-| Metric | Value |
-|---|---|
-| Test Accuracy | **97.54%** |
-| Spam F1-Score | **0.94** |
-| Val F1 (best epoch) | **0.9765** |
-| False Positive Rate | **0.46%** |
-| Hindi F1 (5,572 msgs) | **0.9845** |
-| Adversarial F1 drop | **≤ 0.01** |
-| Manual test (12 cases) | **12/12 correct** |
-
----
-
-## 13. Future Work
+## 12. Future Work
 
 1. **On-device inference** — Export to ONNX/TFLite for fully offline mobile prediction (no API needed)
 2. **Active URL scanning** — Follow redirects, analyze landing page content
@@ -528,4 +471,3 @@ Confidence: 97%
 5. **Continuous learning** — Periodic model updates from newly reported scam patterns
 6. **Domain age check** — WHOIS lookup as additional URL feature (newly registered domains = higher risk)
 7. **iOS support** — SMS reading on iOS requires SiriKit/Message Filter Extension entitlement
-

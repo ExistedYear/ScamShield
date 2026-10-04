@@ -12,9 +12,8 @@ class SmishingDetector(nn.Module):
     def __init__(self, num_handcrafted: int = 17, dropout: float = 0.3, freeze_bert_layers: int = 0):
         super().__init__()
 
-        # XLM-RoBERTa instead of DistilBERT
-        # xlm-roberta-base has 12 transformer layers (vs DistilBERT's 6)
-        # hidden size is still 768 — so fusion layer dimensions stay identical
+        # XLM-RoBERTa encoder
+        # xlm-roberta-base has 12 transformer layers with 768-d hidden size
         self.bert = XLMRobertaModel.from_pretrained(MODEL_NAME)
 
         # Freeze bottom N layers if specified

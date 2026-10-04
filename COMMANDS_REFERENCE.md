@@ -9,7 +9,7 @@ Complete guide to running every component of the ScamShield system.
 MAIN-EL-2/
 ├── smishing_detector/      ← Flask API + model inference
 ├── ScamShield-Mobile/      ← React Native mobile app
-├── KaggleTraining/         ← Kaggle training package (Phase 3)
+├── KaggleTraining/         ← Kaggle training package
 ├── models/                 ← Downloaded model checkpoints
 ├── venv/                   ← Python virtual environment
 ├── .env                    ← API keys (GSB + Kaggle)

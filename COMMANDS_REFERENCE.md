@@ -6,7 +6,7 @@ Complete guide to running every component of the ScamShield system.
 ## Project Structure
 
 ```
-MAIN-EL-2/
+ScamShield/
 ├── smishing_detector/      ← Flask API + model inference
 ├── ScamShield-Mobile/      ← React Native mobile app
 ├── KaggleTraining/         ← Kaggle training package
@@ -25,7 +25,7 @@ MAIN-EL-2/
 All commands run from the project root unless stated otherwise:
 
 ```bash
-cd /home/neeraj/Projects/MAIN-EL-2
+cd /home/neeraj/ScamShield
 ```
 
 ### Activate Virtual Environment
@@ -292,7 +292,7 @@ DATASET_PATH = "/kaggle/input/scamshield-training"
 8. Replace the model checkpoint:
 
 ```bash
-cp ~/Downloads/best_model.pt /home/neeraj/Projects/MAIN-EL-2/smishing_detector/best_model.pt
+cp ~/Downloads/best_model.pt /home/neeraj/ScamShield/smishing_detector/best_model.pt
 ```
 
 9. Restart the Flask API — it loads the new model on startup
@@ -442,7 +442,7 @@ eas build --platform android --profile production
 
 ## 8. Quick Reference Card
 
-| Task | Command (from `/home/neeraj/Projects/MAIN-EL-2`) |
+| Task | Command (from `/home/neeraj/ScamShield`) |
 |---|---|
 | Activate venv | `source venv/bin/activate` |
 | Start Flask API | `cd smishing_detector && python -m app.flask_api` |

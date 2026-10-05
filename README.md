@@ -548,7 +548,7 @@ Confidence: 97%
 
 ---
 
-## 12. Future Work
+## 13. Future Work
 
 1. **On-device inference** — Export to ONNX/TFLite for fully offline mobile prediction (no API needed)
 2. **Active URL scanning** — Follow redirects, analyze landing page content
@@ -557,3 +557,26 @@ Confidence: 97%
 5. **Continuous learning** — Periodic model updates from newly reported scam patterns
 6. **Domain age check** — WHOIS lookup as additional URL feature (newly registered domains = higher risk)
 7. **iOS support** — SMS reading on iOS requires SiriKit/Message Filter Extension entitlement
+
+---
+
+## 13. References / Credits
+
+**Research**
+- Base paper: "Enhancing Smishing Detection: A Deep Learning Approach for Improved
+  Accuracy and Reduced False Positives" — IEEE Access, 2024 (DOI: 10.1109/ACCESS.2024.3463871)
+- XLM-RoBERTa: Conneau et al., "Unsupervised Cross-lingual Representation Learning
+  at Scale" (2019) — `FacebookAI/xlm-roberta-base` via Hugging Face Transformers
+
+**Datasets**
+- UCI SMS Spam Collection (Almeida et al.) — `archive.ics.uci.edu/dataset/228/sms+spam+collection`
+- `Deysi/spam-detection-dataset` and `Ngadou/Spam_SMS` via the Hugging Face Hub
+- `dbarbedillo/SMS_Spam_Multilingual_Collection_Dataset` (English + Hindi columns)
+- `rajnathpatel/multilingual-spam-data` (Hindi / Hinglish)
+- `gauravduttakiit/sms-spam` via Kaggle, plus hand-written synthetic Indian transactional SMS
+
+**Models, APIs, and libraries**
+- PyTorch (`pytorch.org`), Hugging Face Transformers (`huggingface.co`), scikit-learn
+- SHAP (Lundberg & Lee) for word-level attribution
+- Google Safe Browsing API v4 (`developers.google.com/safe-browsing`) for URL reputation
+- tldextract, pandas, NumPy, Gradio, Flask, Expo / React Native

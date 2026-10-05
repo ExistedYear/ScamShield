@@ -6,7 +6,10 @@ const KEYS = {
 };
 
 const DEFAULT_SETTINGS = {
-  apiUrl: 'http://192.168.1.100:5000',
+  // Deployed Space by default so a fresh install works without configuration.
+  // Point this at http://<your-lan-ip>:5000 to develop against local Flask —
+  // that path additionally enables the AES-256-CBC encrypted channel.
+  apiUrl: 'https://existedyear-scamshield.hf.space',
   autoScan: true,
   notifications: true,
   darkMode: true,

@@ -2,27 +2,35 @@
  * AES-256-CBC encryption for SMS messages before sending to the API.
  *
  * The key is fetched from /api/encryption-key on first launch and cached
- * in AsyncStorage. Falls back to the built-in dev key if the server is
- * unreachable (e.g. offline first boot). Set SMS_ENCRYPTION_KEY in the
- * server .env to use a custom key — both sides must match.
+ * in AsyncStorage, falling back to the built-in key below when the server is
+ * unreachable (e.g. offline first boot).
+ *
+ * NOTE: the encrypted channel only exists on the Flask backend
+ * (POST /predict_secure). When the app is pointed at a Hugging Face Space the
+ * transport in services/api.js switches to the Space's JSON API over HTTPS,
+ * where the message travels in plaintext — the Space does not expose a
+ * custom binary payload endpoint.
  */
 
 import CryptoJS from 'crypto-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const KEY_STORAGE = 'scamshield_enc_key';
-const APP_TOKEN = 'scamshield-dev-token';
+
+// Must match APP_TOKEN in the server .env — guards GET /api/encryption-key.
+const APP_TOKEN = 'ss-AvmRL7ST5IxsYLDymOl4AI84NDMCDdcP';
+
+// Must match SMS_ENCRYPTION_KEY in the server .env (64 hex chars = 32 bytes).
+// Only used when the Flask backend cannot be reached to hand over a fresh key.
+const DEFAULT_KEY = '1e56bebceaf8862dd9906bdef16b7868c5487fe15816174ad4c4a405a3597ce7';
 
 let _cachedKey = null;
-
-// Fallback key — matches SMS_ENCRYPTION_KEY default in encryption.py
-const DEFAULT_KEY = '5fc5555dfd4b23ecfbfbfda273cb82eb5fdfb8b25c5b1357a2568d6afa1f472e';
 
 export async function getEncryptionKey() {
   if (_cachedKey) return _cachedKey;
 
   const stored = await AsyncStorage.getItem(KEY_STORAGE);
-  // Fall back to built-in dev key so the app works offline on first boot
+  // Fall back to the built-in key so the app works offline on first boot.
   _cachedKey = stored || DEFAULT_KEY;
   return _cachedKey;
 }

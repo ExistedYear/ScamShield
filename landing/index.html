@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ScamShield — Multilingual Smishing Detection</title>
+<meta name="description" content="AI-powered SMS phishing detection for English, Hindi and Hinglish. XLM-RoBERTa + URL fusion + SHAP explainability." />
+<meta property="og:title" content="ScamShield — Multilingual Smishing Detection" />
+<meta property="og:description" content="Catch the scam before it catches you. XLM-RoBERTa + URL fusion + SHAP." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="glow"></div>
+
+<nav class="nav">
+  <a class="logo" href="#home"><span class="logo-m">🛡</span>Scam<span>Shield</span></a>
+  <div class="nav-tabs">
+    <button class="ntab active" data-tab="home">Home</button>
+    <button class="ntab" data-tab="scanner">Scanner</button>
+    <button class="ntab" data-tab="mobile">Mobile</button>
+    <button class="ntab" data-tab="tech">How it works</button>
+  </div>
+  <div class="nav-r">
+    <span class="pill" id="health-pill"><span class="dot-live"></span><span id="health-text">checking…</span></span>
+    <a class="btn btn-ghost" href="https://existedyear-scamshield.hf.space" target="_blank" rel="noopener">Live app ↗</a>
+    <a class="btn btn-primary" href="#scanner" data-goto="scanner">Scan a message</a>
+  </div>
+</nav>
+
+<!-- ══════════════════════════ HOME ══════════════════════════ -->
+<section class="tab-panel active" id="panel-home">
+  <div class="hero">
+    <div class="eyebrow">✦ AI for Cybersecurity</div>
+    <h1>Catch the scam <em>before</em><br />it catches you</h1>
+    <p class="lead">
+      ScamShield reads any SMS in English, Hindi or Hinglish, then returns a verdict,
+      the exact signals behind it, and word-level attribution — so you know
+      <em>why</em> it flagged a message, not just that it did.
+    </p>
+    <div class="hero-cta">
+      <button class="btn btn-primary btn-lg" data-goto="scanner">Scan a message now</button>
+      <a class="btn btn-ghost btn-lg" href="https://existedyear-scamshield.hf.space" target="_blank" rel="noopener">Open full demo ↗</a>
+    </div>
+    <div class="hero-stats">
+      <div class="stat"><b>97.5%</b><span>Test accuracy</span></div>
+      <div class="stat"><b>0.46%</b><span>False positives</span></div>
+      <div class="stat"><b>100</b><span>Languages (XLM-R)</span></div>
+      <div class="stat"><b>30k+</b><span>Training messages</span></div>
+    </div>
+  </div>
+
+  <div class="grid-3">
+    <div class="card">
+      <div class="c-icon" style="--t:var(--brand)">🧠</div>
+      <h3>Reads the message</h3>
+      <p>XLM-RoBERTa encodes the text in 100 languages, so Hindi and Hinglish scams are caught in their own language — not just English.</p>
+    </div>
+    <div class="card">
+      <div class="c-icon" style="--t:var(--md)">🔗</div>
+      <h3>Checks every link</h3>
+      <p>Nine URL signals — suspicious TLDs, shorteners, raw IP hosts, plain HTTP — backed by a whitelist of 100+ legitimate domains.</p>
+    </div>
+    <div class="card">
+      <div class="c-icon" style="--t:var(--lo)">📊</div>
+      <h3>Explains itself</h3>
+      <p>SHAP attribution shows which words pushed the score toward scam and which pushed it toward legitimate. No black box.</p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.2rem">
+    <div class="card-t">The problem it solves</div>
+    <div class="split">
+      <div>
+        <h4>Why SMS phishing is hard to catch</h4>
+        <ul class="ticks">
+          <li>Messages are tiny — often under 160 characters of context.</li>
+          <li>Attackers rewrite wording constantly to slip past filters.</li>
+          <li>Legitimate bank OTPs and recharge alerts <em>look</em> like spam.</li>
+          <li>Hundreds of millions of users still get fooled in multiple languages.</li>
+        </ul>
+      </div>
+      <div>
+        <h4>How ScamShield handles it</h4>
+        <ul class="ticks lo">
+          <li>Multilingual encoder trained on 100 languages, fine-tuned on 30k+ messages.</li>
+          <li>Decision threshold raised to 0.55 to stop flagging Indian bank SMS.</li>
+          <li>Synthetic legitimate transactional SMS added to correct class imbalance.</li>
+          <li>Every prediction is attributable — word-level, not a bare score.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════ SCANNER ══════════════════════════ -->
+<section class="tab-panel" id="panel-scanner">
+  <div class="section-head">
+    <h2>Scanner</h2>
+    <p>Runs the real model on a GPU. First scan may wait ~20s for a GPU slot on the free tier.</p>
+  </div>
+
+  <div class="grid-scan">
+    <div class="card">
+      <div class="card-t">Paste a message</div>
+      <textarea id="sms" rows="6" placeholder="Paste the SMS here…"></textarea>
+      <div class="row-btns">
+        <button class="btn btn-primary" id="scan-btn">Scan message</button>
+        <button class="btn btn-ghost" id="clear-btn">Clear</button>
+      </div>
+      <div class="examples" id="examples"></div>
+    </div>
+    <div id="scan-out">
+      <div class="card empty">
+        <div class="e-mark">🛡</div>
+        <p>Scan a message to see the verdict, the signals behind it, and word-level attribution.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════ MOBILE ══════════════════════════ -->
+<section class="tab-panel" id="panel-mobile">
+  <div class="section-head">
+    <h2>Mobile app</h2>
+    <p>The same pipeline the Android build runs — here against a seeded inbox, since browsers can't read your messages.</p>
+  </div>
+
+  <div class="mob-grid">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="ph-top">
+        <div class="ph-brand">🛡 <span>ScamShield</span></div>
+        <div class="ph-tabs"><span class="pt pt-a">Inbox</span><span class="pt">Scan</span></div>
+      </div>
+      <div id="m-stats" class="stats">
+        <div class="stat"><b>—</b><span>Scanned</span></div>
+        <div class="stat"><b>—</b><span>Flagged</span></div>
+        <div class="stat"><b>—</b><span>Safe</span></div>
+      </div>
+      <div class="row-btns" style="margin-bottom:.7rem">
+        <button class="btn btn-primary" id="m-one-btn">Scan next</button>
+        <button class="btn btn-ghost" id="m-all-btn">Scan all</button>
+      </div>
+      <div class="in-list" id="m-list"></div>
+      <div id="m-out" style="margin-top:.8rem"></div>
+    </div>
+
+    <div class="mob-side">
+      <div class="card">
+        <div class="card-t">What the Android app adds</div>
+        <ul class="ticks">
+          <li><b>Real inbox monitoring</b> — polls the Android SMS store every 15s and scans new messages automatically.</li>
+          <li><b>Background scanning</b> — keeps checking when the app is closed and raises a local notification on a threat.</li>
+          <li><b>Encrypted channel</b> — every message is encrypted with AES-256-CBC before it leaves the device.</li>
+          <li><b>Risk inbox</b> — colour-coded badges across the whole conversation list.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-t">Get the build</div>
+        <p class="p-sm">The Android APK talks to the same API this page uses. Grab it from
+          <b>GitHub Releases</b> once the EAS build drops, then install it on a device
+          to scan a real inbox.</p>
+        <div class="row-btns">
+          <a class="btn btn-primary" href="https://github.com/ExistedYear/ScamShield/releases" target="_blank" rel="noopener">Get the Android build ↗</a>
+          <button class="btn btn-ghost" data-goto="scanner">Try it here</button>
+        </div>
+        <p class="fine">Android 7+ · requires SMS permission · sideload if not on Play Store</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════ TECH ══════════════════════════ -->
+<section class="tab-panel" id="panel-tech">
+  <div class="section-head">
+    <h2>How it works</h2>
+    <p>XLM-RoBERTa with hand-crafted URL features, late-fused into one classifier.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-t">Pipeline</div>
+    <div class="pipe">
+      <div class="pstep"><b>SMS</b><span>English · Hindi · Hinglish</span></div>
+      <div class="parrow">→</div>
+      <div class="pstep"><b>XLM-RoBERTa</b><span>768-d CLS embedding</span></div>
+      <div class="parrow">→</div>
+      <div class="pstep"><b>17 signals</b><span>9 URL + 8 text</span></div>
+      <div class="parrow">→</div>
+      <div class="pstep"><b>Fuse → 832-d</b><span>concat, project to 64</span></div>
+      <div class="parrow">→</div>
+      <div class="pstep hot"><b>Sigmoid</b><span>threshold 0.55</span></div>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-top:1.2rem">
+    <div class="card">
+      <div class="card-t">URL signals (9)</div>
+      <div class="sig-list">
+        <span class="chip">has_url</span><span class="chip">num_urls</span>
+        <span class="chip ch-md">has_http</span><span class="chip ch-md">has_https</span>
+        <span class="chip ch-hi">suspicious_tld</span><span class="chip">max_url_len</span>
+        <span class="chip ch-hi">has_ip_url</span><span class="chip ch-hi">has_shortened_url</span>
+        <span class="chip ch-lo">has_legit_domain</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-t">Text signals (8)</div>
+      <div class="sig-list">
+        <span class="chip">num_chars</span><span class="chip">num_words</span>
+        <span class="chip ch-md">pct_upper</span><span class="chip">pct_digits</span>
+        <span class="chip">num_special</span><span class="chip ch-hi">urgency_count</span>
+        <span class="chip ch-md">has_phone</span><span class="chip">has_currency</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-top:1.2rem">
+    <div class="card">
+      <div class="card-t">Measured on the held-out test split</div>
+      <div class="metrics">
+        <div><span>Accuracy</span><b>97.54%</b></div>
+        <div><span>Spam F1</span><b>0.94</b></div>
+        <div><span>False positive rate</span><b>0.46%</b></div>
+        <div><span>Hindi F1</span><b>0.9845</b></div>
+        <div><span>ROC-AUC</span><b>0.9999</b></div>
+        <div><span>Adversarial F1 drop</span><b>≤ 0.01</b></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-t">Stack</div>
+      <div class="stack">
+        <div><b>XLM-RoBERTa-base</b><span>270M multilingual encoder</span></div>
+        <div><b>PyTorch</b><span>training + inference</span></div>
+        <div><b>SHAP</b><span>word-level attribution</span></div>
+        <div><b>Gradio + Flask</b><span>API and demo surface</span></div>
+        <div><b>React Native</b><span>Android client, AES-256-CBC</span></div>
+        <div><b>tldextract</b><span>domain and TLD parsing</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.2rem">
+    <div class="card-t">Built for</div>
+    <div class="split">
+      <div>
+        <h4>ScamShield is for</h4>
+        <ul class="ticks">
+          <li>Anyone receiving bank OTPs, prize notices or "verify your account" texts.</li>
+          <li>Caregivers helping less technical family members stay safe.</li>
+          <li>Researchers studying multilingual social-engineering patterns.</li>
+        </ul>
+      </div>
+      <div>
+        <h4>Not a replacement for</h4>
+        <ul class="ticks warn">
+          <li>Judging intent — it scores patterns, it does not read intent.</li>
+          <li>Verified sender identity — check the number, not just the text.</li>
+          <li>Reporting — forward suspicious messages to your bank and the authorities.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="foot">
+  <p><b>ScamShield</b> · XLM-RoBERTa + URL fusion + SHAP · threshold 0.55 · EN / HI / Hinglish<br />
+  Model served on a free GPU tier — occasional queue waits while a GPU slot frees up.</p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

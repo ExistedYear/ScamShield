@@ -19,3 +19,5 @@ yarn-debug.*
 yarn-error.*
 .env.local
 .DS_Store
+.vercel
+hf-space/

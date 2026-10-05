@@ -215,7 +215,7 @@ async function runScan() {
   btn.disabled = true;
   btn.textContent = 'Scanning…';
   out.innerHTML = `<div class="card empty"><span class="spin"></span>
-    <p style="margin-top:.9rem">Waiting for a GPU slot — first scan on the free tier can take ~20s.</p></div>`;
+    <p style="margin-top:.9rem">Analysing — first scan can take a few seconds while the model wakes up.</p></div>`;
 
   try {
     // Verdict first, attribution after — matches how the model actually works.
@@ -231,7 +231,7 @@ async function runScan() {
   } catch (err) {
     out.innerHTML = `<div class="card"><div class="card-t">Scan failed</div>
       <div class="row">${esc(err.message)}<br><br>
-      The model may be asleep or waiting on GPU quota — hit “Live app” in the header, or try
+      The model may be asleep — hit “Live app” in the header, or try
       again in a moment.</div></div>`;
   } finally {
     btn.disabled = false;

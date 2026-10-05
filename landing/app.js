@@ -1,5 +1,7 @@
 /* ScamShield landing — talks to the Gradio API hosted on the HF Space.
  *
+ * Static site, no build step: Vercel serves this folder as-is on every push.
+ *
  * Set ?mock=1 (or edit MOCK below) to render against the local mock server
  * instead, so the UI can be reviewed without spending GPU quota:
  *     python3 /tmp/opencode/mock_server.py

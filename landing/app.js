@@ -250,11 +250,19 @@ function mStatsHTML(scanned, threats) {
 }
 
 function mRowHTML(seed, i, res) {
-  const spam = res && res.label === 'spam';
-  const colour = spam ? 'var(--hi)' : res ? 'var(--lo)' : 'var(--faint)';
-  const soft = spam ? 'var(--hi-s)' : 'var(--lo-s)';
-  const brd = spam ? 'var(--hi-b)' : 'var(--lo-b)';
-  const tag = res ? (spam ? 'SCAM' : 'SAFE') : '—';
+  // Same three tiers as the detail card: high → SCAM, medium → SUSPICIOUS.
+  let colour = 'var(--faint)', soft = 'var(--lo-s)', brd = 'var(--lo-b)', tag = '—';
+  if (res) {
+    const p = Math.max(0, Math.min(1, res.confidence || 0));
+    const lvl = res.risk_level || '';
+    if (p >= 0.75 || lvl === 'high') {
+      colour = 'var(--hi)'; soft = 'var(--hi-s)'; brd = 'var(--hi-b)'; tag = 'SCAM';
+    } else if (p >= 0.55 || lvl === 'medium') {
+      colour = 'var(--md)'; soft = 'var(--md-s)'; brd = 'var(--md-b)'; tag = 'SUSPICIOUS';
+    } else {
+      colour = 'var(--lo)'; soft = 'var(--lo-s)'; brd = 'var(--lo-b)'; tag = 'SAFE';
+    }
+  }
   return `<div class="in-r" data-i="${i}">
     <span class="in-d" style="background:${colour}"></span>
     <div class="in-b">

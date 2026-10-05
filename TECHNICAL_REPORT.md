@@ -5,6 +5,10 @@
 > A production-grade smishing shield that reads English, Hindi and Hinglish the way
 > attackers actually write them — then proves every verdict with word-level evidence.
 > 97.54% accuracy, 0.46% false positives, live demo, open API, shipping Android app.
+>
+> **Try it:** [scam-shield-flame-delta.vercel.app](https://scam-shield-flame-delta.vercel.app) ·
+> [API + full demo on Hugging Face](https://existedyear-scamshield.hf.space) ·
+> [Android APK](https://github.com/ExistedYear/ScamShield/raw/main/APKs/app-release.apk)
 
 ---
 
@@ -12,7 +16,8 @@
 
 If you cannot click through the UI, evaluate ScamShield entirely through its live
 JSON API — no browser, no GPU slot, no waiting room. Every endpoint below is served
-by the deployed Space and returns machine-readable JSON.
+by the deployed Space and returns machine-readable JSON. Humans should start at
+the landing page: **https://scam-shield-flame-delta.vercel.app** (same model underneath).
 
 **Base URL:** `https://existedyear-scamshield.hf.space`
 
